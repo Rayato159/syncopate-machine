@@ -1,0 +1,8 @@
+/target
+/multiscreen-testing
+/experiment
+/runs
+/examples/data/*
+!/examples/data/.gitkeep
+/papers
+/examples/data_npc

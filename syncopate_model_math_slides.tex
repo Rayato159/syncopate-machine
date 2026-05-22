@@ -1,0 +1,401 @@
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{booktabs}
+
+\title{Syncopate Machine: Model Mathematics}
+\subtitle{A Small Decoder-Only Transformer for NPC Chat}
+\author{syncopate-machine}
+\date{\today}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\softmax}{\operatorname{softmax}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{Model Goal}
+  Syncopate Machine is a small causal language model trained for NPC chat.
+
+  \vspace{0.5em}
+
+  Given a token sequence
+  \[
+    x_1, x_2, \ldots, x_T,
+  \]
+  the model learns the next-token distribution
+  \[
+    p(x_{t+1} \mid x_{\le t}).
+  \]
+
+  \vspace{0.5em}
+
+  The model is decoder-only: every token can attend only to itself and previous tokens.
+\end{frame}
+
+\begin{frame}{Architecture Overview}
+  \[
+    \text{tokens}
+    \rightarrow
+    \text{embedding}
+    \rightarrow
+    N \times \text{decoder block}
+    \rightarrow
+    \text{final RMSNorm}
+    \rightarrow
+    \text{logits}
+  \]
+
+  \vspace{0.5em}
+
+  Each decoder block contains:
+
+  \begin{itemize}
+    \item pre-normalized causal self-attention
+    \item residual connection
+    \item pre-normalized SwiGLU feed-forward network
+    \item residual connection
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Embedding and Output Logits}
+  Token ids are mapped into vectors by an embedding matrix:
+  \[
+    E \in \R^{V \times d}
+  \]
+  where \(V\) is vocabulary size and \(d\) is model width.
+
+  \[
+    h_0 = E[x]
+  \]
+
+  \vspace{0.5em}
+
+  The output projection is tied to the input embedding:
+  \[
+    \ell_t = h_t E^\top
+  \]
+
+  \[
+    p(x_{t+1} = k \mid x_{\le t})
+    =
+    \softmax(\ell_t)_k
+  \]
+\end{frame}
+
+\begin{frame}{RMSNorm}
+  RMSNorm rescales a vector without subtracting the mean:
+
+  \[
+    \RMSNorm(x)
+    =
+    g \odot
+    \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d}x_i^2 + \epsilon}}
+  \]
+
+  \vspace{0.5em}
+
+  Here:
+
+  \begin{itemize}
+    \item \(g\) is a learned scale vector
+    \item \(d\) is the hidden width
+    \item \(\epsilon\) avoids division by zero
+  \end{itemize}
+
+  \vspace{0.5em}
+
+  This is cheaper than LayerNorm and works well for small decoder-only models.
+\end{frame}
+
+\begin{frame}{Decoder Block}
+  For block \(l\), with hidden state \(h_l\):
+
+  \[
+    a_l = \operatorname{Attention}(\RMSNorm(h_l))
+  \]
+
+  \[
+    u_l = h_l + a_l
+  \]
+
+  \[
+    m_l = \operatorname{SwiGLU}(\RMSNorm(u_l))
+  \]
+
+  \[
+    h_{l+1} = u_l + m_l
+  \]
+
+  \vspace{0.5em}
+
+  This is a pre-norm residual Transformer block.
+\end{frame}
+
+\begin{frame}{Causal Self-Attention}
+  Attention starts with linear projections:
+
+  \[
+    Q = XW_Q,\qquad K = XW_K,\qquad V = XW_V
+  \]
+
+  For one head:
+
+  \[
+    s_{ij}
+    =
+    \frac{q_i \cdot k_j}{\sqrt{d_h}}
+  \]
+
+  Causal masking blocks future tokens:
+
+  \[
+    s_{ij} =
+    \begin{cases}
+      s_{ij}, & j \le i \\
+      -\infty, & j > i
+    \end{cases}
+  \]
+
+  \[
+    \operatorname{Attention}(i)
+    =
+    \sum_{j \le i}
+    \softmax(s_i)_j v_j
+  \]
+\end{frame}
+
+\begin{frame}{Grouped Query Attention}
+  Syncopate uses more query heads than key/value heads:
+
+  \[
+    H_q \ge H_{kv}
+  \]
+
+  \vspace{0.5em}
+
+  Example for the 1M preset:
+
+  \[
+    d = 96,\qquad H_q = 4,\qquad H_{kv} = 1
+  \]
+
+  \[
+    d_h = \frac{d}{H_q} = \frac{96}{4} = 24
+  \]
+
+  \vspace{0.5em}
+
+  This reduces key/value parameters and memory while keeping multiple query heads.
+\end{frame}
+
+\begin{frame}{Rotary Position Embeddings}
+  RoPE injects position by rotating each even/odd feature pair.
+
+  For pair index \(r\) at position \(p\):
+
+  \[
+    \theta_r = \theta_{\text{base}}^{-2r/d_h}
+  \]
+
+  \[
+    \alpha = p\theta_r
+  \]
+
+  \[
+    \begin{bmatrix}
+      x'_{2r} \\
+      x'_{2r+1}
+    \end{bmatrix}
+    =
+    \begin{bmatrix}
+      \cos \alpha & -\sin \alpha \\
+      \sin \alpha & \cos \alpha
+    \end{bmatrix}
+    \begin{bmatrix}
+      x_{2r} \\
+      x_{2r+1}
+    \end{bmatrix}
+  \]
+
+  RoPE is applied to \(Q\) and \(K\), not \(V\).
+\end{frame}
+
+\begin{frame}{SwiGLU Feed-Forward Network}
+  The feed-forward network uses a gated activation:
+
+  \[
+    \operatorname{SwiGLU}(x)
+    =
+    \left(\SiLU(xW_g) \odot xW_u\right)W_d
+  \]
+
+  \[
+    \SiLU(z) = z\sigma(z) = \frac{z}{1 + e^{-z}}
+  \]
+
+  \vspace{0.5em}
+
+  Compared with a plain ReLU MLP, SwiGLU gives the block a learned gate.
+  That is useful for small models because capacity is precious.
+\end{frame}
+
+\begin{frame}{Chat Loss Masking}
+  Training data is normalized as:
+
+  \[
+    \{\text{input},\text{output},\text{source}\}
+  \]
+
+  The token sequence is:
+
+  \[
+    [\text{prompt tokens},\text{response tokens},\text{EOS}]
+  \]
+
+  The model sees the prompt, but loss is computed only on response tokens:
+
+  \[
+    \mathcal{L}
+    =
+    -\frac{
+      \sum_t m_t \log p(y_t \mid x_{\le t})
+    }{
+      \sum_t m_t + \epsilon
+    }
+  \]
+
+  where \(m_t = 1\) for response targets and \(m_t = 0\) for prompt targets.
+\end{frame}
+
+\begin{frame}{Simple Loss Example}
+  Suppose:
+
+  \[
+    \text{tokens} = [10, 20, 5, 3]
+  \]
+
+  \[
+    \text{inputs} = [10, 20, 5],
+    \qquad
+    \text{targets} = [20, 5, 3]
+  \]
+
+  If the prompt is token \(10\), mask out the prompt target:
+
+  \[
+    m = [0, 1, 1]
+  \]
+
+  If:
+
+  \[
+    p(5)=0.25,\qquad p(3)=0.50
+  \]
+
+  then:
+
+  \[
+    \mathcal{L}
+    =
+    -\frac{\log(0.25)+\log(0.50)}{2}
+    =
+    1.0395
+  \]
+
+  \[
+    \text{perplexity} = e^{1.0395} \approx 2.83
+  \]
+\end{frame}
+
+\begin{frame}{1M Preset Parameter Count}
+  With:
+
+  \[
+    V=4096,\quad d=96,\quad L=2,\quad H_q=4,\quad H_{kv}=1,\quad d_{ff}=256
+  \]
+
+  Embedding parameters:
+
+  \[
+    Vd = 4096 \times 96 = 393216
+  \]
+
+  Attention per layer:
+
+  \[
+    W_Q:96^2,\quad W_K:96\cdot24,\quad W_V:96\cdot24,\quad W_O:96^2
+  \]
+
+  \[
+    9216 + 2304 + 2304 + 9216 = 23040
+  \]
+
+  SwiGLU per layer:
+
+  \[
+    3dd_{ff} = 3 \times 96 \times 256 = 73728
+  \]
+\end{frame}
+
+\begin{frame}{1M Preset Total}
+  Per layer:
+
+  \[
+    23040 + 73728 + 2d
+    =
+    23040 + 73728 + 192
+    =
+    96960
+  \]
+
+  Two layers:
+
+  \[
+    2 \times 96960 = 193920
+  \]
+
+  Final total:
+
+  \[
+    393216 + 193920 + 96 = 587232
+  \]
+
+  \vspace{0.5em}
+
+  So the practical 1M preset with a 4096-token vocabulary has about:
+
+  \[
+    5.87 \times 10^5 \text{ parameters}
+  \]
+\end{frame}
+
+\begin{frame}{Takeaway}
+  Syncopate Machine is not magic. It is a compact, practical GPT-style model:
+
+  \begin{itemize}
+    \item causal next-token prediction
+    \item tied embeddings
+    \item RMSNorm pre-norm blocks
+    \item RoPE positional encoding
+    \item grouped-query causal attention
+    \item SwiGLU feed-forward layers
+    \item response-only chat loss masking
+  \end{itemize}
+
+  \vspace{0.5em}
+
+  The design keeps parameter count low while still matching the core math used by modern decoder-only language models.
+\end{frame}
+
+\end{document}
