@@ -7,17 +7,20 @@
 //! cargo run --release --example train_with_tokenizer -- \
 //!     --train-dir examples/data --run-dir runs/my-model --steps 5000
 //!
-//! # Then chat with it:
-//! cargo run --release --example chat_with_tokenizer -- --run-dir runs/my-model
+//! # Then chat with Mew:
+//! cargo run --release --example chat_with_tokenizer -- \
+//!     --run-dir runs/my-model --npc mew
 //!
 //! # One-shot mode:
 //! cargo run --release --example chat_with_tokenizer -- \
-//!     --run-dir runs/my-model --prompt "สวัสดี"
+//!     --run-dir runs/my-model --npc jin --prompt "สวัสดี"
 //! ```
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use sentencepiece_rs::SentencePieceProcessor;
+use serde::Deserialize;
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use syncopate_machine::prelude::*;
@@ -47,6 +50,11 @@ impl SpTokenizer {
             .collect()
     }
 
+    fn decode(&self, ids: &[u32]) -> String {
+        let ids: Vec<usize> = ids.iter().map(|&id| id as usize).collect();
+        self.proc.decode_ids(&ids).unwrap_or_default()
+    }
+
     fn eos_id(&self) -> Option<u32> {
         self.proc.eos_id().map(|id| id as u32)
     }
@@ -59,28 +67,210 @@ impl SpTokenizer {
     }
 }
 
-/// Decode a token piece from SentencePiece.
-///
-/// Handles three cases:
-/// - `<0xNN>` → byte fallback token → convert to actual char
-/// - `▁` prefix → SentencePiece space marker → replace with space
-/// - anything else → return as-is
-fn piece_to_text(piece: &str) -> String {
-    // SentencePiece byte fallback: <0xNN> → raw byte
-    if piece.starts_with("<0x")
-        && piece.ends_with('>')
-        && piece.len() == 6
-        && let Ok(byte_val) = u8::from_str_radix(&piece[3..5], 16)
-    {
-        return (byte_val as char).to_string();
+// ---------------------------------------------------------------------------
+// Persona prompt contract
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NpcId {
+    Mew,
+    Jin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum ChatLanguage {
+    Thai,
+    English,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LanguageMode {
+    Auto,
+    Thai,
+    English,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PromptContract {
+    Plain,
+    NpcLangV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum RelationState {
+    Low,
+    Neutral,
+    Close,
+}
+
+impl NpcId {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "mew" | "หมิว" => Ok(Self::Mew),
+            "jin" | "จิน" => Ok(Self::Jin),
+            other => bail!("unknown npc '{other}'; use mew or jin"),
+        }
     }
 
-    // SentencePiece uses U+2581 (▁) as space marker
-    if let Some(rest) = piece.strip_prefix('\u{2581}') {
-        return format!(" {rest}");
+    fn label(self) -> &'static str {
+        match self {
+            Self::Mew => "mew",
+            Self::Jin => "jin",
+        }
     }
 
-    piece.to_owned()
+    #[allow(dead_code)]
+    fn display_name(self, language: ChatLanguage) -> &'static str {
+        match (self, language) {
+            (Self::Mew, ChatLanguage::Thai) => "หมิว",
+            (Self::Mew, ChatLanguage::English) => "Mew",
+            (Self::Jin, ChatLanguage::Thai) => "จิน",
+            (Self::Jin, ChatLanguage::English) => "Jin",
+        }
+    }
+
+    #[allow(dead_code)]
+    fn traits(self, language: ChatLanguage) -> &'static str {
+        match (self, language) {
+            (Self::Mew, ChatLanguage::Thai) => {
+                "เด็กเรียน สาวแว่น ขี้อาย ลังเล แต่จริงใจมาก และแอบชอบธันวามานาน"
+            }
+            (Self::Mew, ChatLanguage::English) => {
+                "studious, glasses girl, shy, hesitant, very sincere, secretly likes Thanwa for a long time"
+            }
+            (Self::Jin, ChatLanguage::Thai) => {
+                "เด็กกิจกรรม สายลุย กล้าแสดงออก ตรงไปตรงมา ปากร้ายนิดๆ แต่แอบชอบธันวามาก"
+            }
+            (Self::Jin, ChatLanguage::English) => {
+                "active school event girl, bold, direct, brave, sharp-tongued, secretly likes Thanwa a lot"
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl ChatLanguage {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "th" | "thai" => Ok(Self::Thai),
+            "en" | "eng" | "english" => Ok(Self::English),
+            other => bail!("unknown language '{other}'; use th or en"),
+        }
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            Self::Thai => "<th>",
+            Self::English => "<en>",
+        }
+    }
+}
+
+impl LanguageMode {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "th" | "thai" => Ok(Self::Thai),
+            "en" | "eng" | "english" => Ok(Self::English),
+            other => bail!("unknown language mode '{other}'; use auto, th, or en"),
+        }
+    }
+
+    fn resolve(self, player_message: &str) -> Option<ChatLanguage> {
+        match self {
+            Self::Auto => detect_text_language(player_message),
+            Self::Thai => Some(ChatLanguage::Thai),
+            Self::English => Some(ChatLanguage::English),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Thai => "th",
+            Self::English => "en",
+        }
+    }
+}
+
+impl PromptContract {
+    fn load(run_dir: &Path, value: &str) -> Result<Self> {
+        if value.trim().eq_ignore_ascii_case("auto") {
+            let path = run_dir.join("prompt_contract.txt");
+            if !path.exists() {
+                return Ok(Self::Plain);
+            }
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            return Self::parse(text.trim());
+        }
+        Self::parse(value)
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "plain" => Ok(Self::Plain),
+            "npc-lang-v1" | "npc_lang_v1" | "lang" => Ok(Self::NpcLangV1),
+            other => bail!("unknown prompt contract '{other}'; use auto, plain, or npc-lang-v1"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::NpcLangV1 => "npc-lang-v1",
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl RelationState {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "neutral" => Ok(Self::Neutral),
+            "close" => Ok(Self::Close),
+            other => bail!("unknown relation '{other}'; use low, neutral, or close"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Neutral => "neutral",
+            Self::Close => "close",
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn default_scene(language: ChatLanguage) -> &'static str {
+    match language {
+        ChatLanguage::Thai => "ห้องเรียนที่เอาโต๊ะกั้นประตู",
+        ChatLanguage::English => "classroom barricade",
+    }
+}
+
+fn build_runtime_prompt(
+    npc: NpcId,
+    player_message: &str,
+    contract: PromptContract,
+    language: Option<ChatLanguage>,
+) -> String {
+    match contract {
+        PromptContract::Plain => format!("<{}>\n{}", npc.label(), player_message),
+        PromptContract::NpcLangV1 => {
+            let language = language.unwrap_or(ChatLanguage::English);
+            format!(
+                "<{}>\n{}\n{}",
+                npc.label(),
+                language.token(),
+                player_message
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -88,16 +278,16 @@ fn piece_to_text(piece: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn find_tokenizer(run_dir: &Path) -> Result<PathBuf> {
-    // 1. Inside run dir (copied by train_with_tokenizer)
     let p = run_dir.join("tokenizer.model");
     if p.exists() {
         return Ok(p);
     }
-    // 2. Bundled in examples/data/
+
     let p = PathBuf::from("examples/data/tokenizer.model");
     if p.exists() {
         return Ok(p);
     }
+
     anyhow::bail!(
         "tokenizer.model not found in {} or examples/data/",
         run_dir.display()
@@ -105,38 +295,20 @@ fn find_tokenizer(run_dir: &Path) -> Result<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------
-// Sampling with temperature + top-k + repetition penalty
+// Sampling
 // ---------------------------------------------------------------------------
 
-/// Sample from logits with temperature, top-k filtering, and repetition penalty.
-/// Returns a sampled token ID.
 fn sample_token(
     logits: &[f32],
     temperature: f32,
     top_k: usize,
     repetition_penalty: f32,
     recent_tokens: &[u32],
+    blocked_token_ids: &[u32],
 ) -> u32 {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
+    let mut scores = logits.to_vec();
 
-    if temperature <= 0.0 {
-        // Greedy — but still apply repetition penalty
-        let mut best = (0usize, f32::NEG_INFINITY);
-        for (i, &v) in logits.iter().enumerate() {
-            let mut score = v;
-            if recent_tokens.contains(&(i as u32)) && repetition_penalty > 1.0 {
-                score /= repetition_penalty;
-            }
-            if score > best.1 {
-                best = (i, score);
-            }
-        }
-        return best.0 as u32;
-    }
-
-    // Apply repetition penalty
-    let mut scores: Vec<f32> = logits.to_vec();
     for &tok in recent_tokens {
         let idx = tok as usize;
         if idx < scores.len() && repetition_penalty > 1.0 {
@@ -148,50 +320,158 @@ fn sample_token(
         }
     }
 
-    // Temperature scaling
-    let mut scores: Vec<f32> = scores.iter().map(|s| s / temperature).collect();
-
-    // Suppress special tokens: <unk>=0, <0x00>=1, </s>=2
-    scores[0] = f32::NEG_INFINITY;
-    if scores.len() > 1 {
-        scores[1] = f32::NEG_INFINITY;
-    }
-    if scores.len() > 2 {
-        scores[2] = f32::NEG_INFINITY; // </s> — don't generate unless forced
+    for &tok in blocked_token_ids {
+        let idx = tok as usize;
+        if idx < scores.len() {
+            scores[idx] = f32::NEG_INFINITY;
+        }
     }
 
-    // Suppress byte fallback tokens (<0xNN>) — they produce garbage output.
-    // SentencePiece with byte_fallback places them at IDs 3..258 (after <unk>, <0x00>, </s>).
-    // These tokens represent raw bytes, not meaningful text — the model should use
-    // proper subword tokens instead. Suppressing forces the model to pick real tokens.
-    for i in 3..scores.len().min(259) {
-        scores[i] = f32::NEG_INFINITY;
+    if temperature <= 0.0 {
+        let mut best = (0usize, f32::NEG_INFINITY);
+        for (idx, &score) in scores.iter().enumerate() {
+            if score > best.1 {
+                best = (idx, score);
+            }
+        }
+        return best.0 as u32;
     }
 
-    // Top-k filtering: keep only the top-k highest scores
-    let mut indexed: Vec<(usize, f32)> = scores.iter().copied().enumerate().collect();
+    for score in &mut scores {
+        *score /= temperature;
+    }
+
+    let mut indexed: Vec<(usize, f32)> = scores
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, score)| score.is_finite())
+        .collect();
+    if indexed.is_empty() {
+        return 0;
+    }
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    indexed.truncate(top_k);
+    indexed.truncate(top_k.max(1).min(indexed.len()));
 
-    // Softmax over remaining
     let max_val = indexed[0].1;
     let exps: Vec<(usize, f32)> = indexed
         .iter()
-        .map(|&(idx, s)| (idx, (s - max_val).exp()))
+        .map(|&(idx, score)| (idx, (score - max_val).exp()))
         .collect();
-    let sum: f32 = exps.iter().map(|(_, e)| *e).sum();
-    let probs: Vec<(usize, f32)> = exps.iter().map(|&(idx, e)| (idx, e / sum)).collect();
+    let sum: f32 = exps.iter().map(|(_, value)| *value).sum();
+    if sum <= 0.0 || !sum.is_finite() {
+        return indexed[0].0 as u32;
+    }
 
-    // Weighted random sample
+    let mut rng = rand::thread_rng();
     let r: f32 = rng.r#gen();
     let mut cumulative = 0.0f32;
-    for &(idx, p) in &probs {
-        cumulative += p;
+    for &(idx, exp_value) in &exps {
+        cumulative += exp_value / sum;
         if r <= cumulative {
             return idx as u32;
         }
     }
-    probs.last().map(|&(idx, _)| idx as u32).unwrap_or(0)
+    exps.last().map(|&(idx, _)| idx as u32).unwrap_or(0)
+}
+
+fn blocked_token_ids(sp: &SpTokenizer, vocab_size: usize, eos_id: Option<u32>) -> Vec<u32> {
+    let mut blocked = Vec::new();
+    for id in 0..vocab_size as u32 {
+        if Some(id) == eos_id {
+            continue;
+        }
+        let piece = sp.id_to_piece(id);
+        if id == 0 || id == 1 || id == 2 || (piece.starts_with("<0x") && piece.ends_with('>')) {
+            blocked.push(id);
+        }
+    }
+    blocked
+}
+
+// ---------------------------------------------------------------------------
+// Output parsing
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct NpcReply {
+    message: String,
+    mood: String,
+    relation_point: i32,
+}
+
+fn parse_reply(text: &str) -> Option<NpcReply> {
+    let trimmed = text.trim();
+    if let Ok(reply) = serde_json::from_str::<NpcReply>(trimmed) {
+        return Some(reply);
+    }
+
+    let object = extract_reply_json(trimmed)?;
+    serde_json::from_str::<NpcReply>(object).ok()
+}
+
+fn extract_reply_json(text: &str) -> Option<&str> {
+    for (start, _) in text.match_indices('{') {
+        let Some(object) = extract_json_object_from(text, start) else {
+            continue;
+        };
+        if serde_json::from_str::<NpcReply>(object).is_ok() {
+            return Some(object);
+        }
+    }
+
+    None
+}
+
+fn extract_json_object_from(text: &str, start: usize) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, ch) in text[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return Some(&text[start..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn print_reply(npc: NpcId, generated: &str, show_raw: bool) {
+    println!("{}>", npc.label());
+    if let Some(reply) = parse_reply(generated) {
+        println!("message: {}", reply.message);
+        println!("mood: {}", reply.mood);
+        println!("point: {}", reply.relation_point);
+        if show_raw {
+            println!(
+                "raw: {}",
+                extract_reply_json(generated).unwrap_or_else(|| generated.trim())
+            );
+        }
+    } else {
+        println!("raw: {}", generated.trim());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +481,7 @@ fn sample_token(
 #[derive(Parser)]
 #[command(
     name = "chat_with_tokenizer",
-    about = "Chat with a trained Syncopate NPC-chat model using streaming output"
+    about = "Chat with a trained Syncopate NPC-chat model using persona prompts"
 )]
 struct Args {
     /// Run directory from train_with_tokenizer (contains checkpoints/).
@@ -212,25 +492,49 @@ struct Args {
     #[arg(long)]
     checkpoint: Option<PathBuf>,
 
-    /// One-shot prompt. If omitted, starts interactive mode.
+    /// NPC to talk with: mew or jin. If omitted in interactive mode, asks first.
+    #[arg(long)]
+    npc: Option<String>,
+
+    /// Prompt for one-shot mode. If omitted, starts interactive mode.
     #[arg(long)]
     prompt: Option<String>,
+
+    /// Reply language mode: auto, th, or en.
+    #[arg(long, default_value = "auto")]
+    lang: String,
+
+    /// Runtime prompt contract: auto, plain, or npc-lang-v1.
+    #[arg(long, default_value = "auto")]
+    prompt_contract: String,
 
     /// Max tokens to generate per response.
     #[arg(long, default_value_t = 128)]
     max_new_tokens: usize,
 
     /// Sampling temperature (0 = greedy, 1.0 = normal, >1 = more random).
-    #[arg(long, default_value_t = 0.8)]
+    #[arg(long, default_value_t = 0.2)]
     temperature: f32,
 
     /// Top-k sampling: only consider top K most likely tokens.
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = 10)]
     top_k: usize,
 
     /// Repetition penalty (>1.0 penalizes repeated tokens).
-    #[arg(long, default_value_t = 1.2)]
+    #[arg(long, default_value_t = 1.1)]
     repetition_penalty: f32,
+
+    /// Print raw generated JSON text after parsed fields.
+    #[arg(long, default_value_t = false)]
+    show_raw: bool,
+
+    /// Retry sampling when parsed message language does not match the input.
+    #[arg(long, default_value_t = 4)]
+    language_retries: usize,
+
+    /// Temperature used for language-match retries.
+    #[arg(long, default_value_t = 0.8)]
+    retry_temperature: f32,
 }
 
 // ---------------------------------------------------------------------------
@@ -239,19 +543,19 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let mut language_mode = LanguageMode::parse(&args.lang)?;
+    let prompt_contract = PromptContract::load(&args.run_dir, &args.prompt_contract)?;
 
-    // --- Resolve checkpoint path ---
     let ckpt = args
         .checkpoint
+        .clone()
         .unwrap_or_else(|| args.run_dir.join("checkpoints/latest.mpk"));
     anyhow::ensure!(ckpt.exists(), "checkpoint not found: {}", ckpt.display());
 
-    // --- Load tokenizer ---
     let tok_path = find_tokenizer(&args.run_dir)?;
     let sp = SpTokenizer::load(&tok_path)?;
     eprintln!("tokenizer: {}", tok_path.display());
 
-    // --- Load model ---
     let model = ChatModel::load(&ckpt)?;
     eprintln!(
         "loaded model: {} params",
@@ -262,105 +566,172 @@ fn main() -> Result<()> {
     eprintln!("seq_len={seq_len}, vocab_size={vocab_size}");
 
     let eos_id = sp.eos_id();
-    let pad_token_id: u32 = 0;
-
+    let blocked_token_ids = blocked_token_ids(&sp, vocab_size, eos_id);
     eprintln!(
         "sampling: temperature={:.2}, top_k={}, repetition_penalty={:.2}",
         args.temperature, args.top_k, args.repetition_penalty
     );
+    eprintln!(
+        "prompt_contract={}, lang={}",
+        prompt_contract.label(),
+        language_mode.label()
+    );
     eprintln!();
 
-    // --- Generate function (manual autoregressive with sampling) ---
     let generate = |prompt_text: &str,
                     max_new_tokens: usize,
                     temperature: f32,
                     top_k: usize,
-                    repetition_penalty: f32|
+                    repetition_penalty: f32,
+                    force_json_prefix: bool|
      -> Result<String> {
         let prompt_ids = sp.encode(prompt_text);
         if prompt_ids.is_empty() {
             anyhow::bail!("prompt tokenized to empty sequence");
         }
 
-        let mut output_ids = prompt_ids.clone();
-        let mut full_text = String::new();
+        let mut output_ids = prompt_ids;
+        let mut generated_ids: Vec<u32> = Vec::new();
+        if force_json_prefix {
+            generated_ids = sp.encode("{");
+            output_ids.extend_from_slice(&generated_ids);
+        }
+        let mut full_text = sp.decode(&generated_ids);
         let mut recent_tokens: Vec<u32> = Vec::new();
-        const RECENT_WINDOW: usize = 16; // track last N tokens for repetition penalty
+        const RECENT_WINDOW: usize = 24;
 
-        let mut consecutive_eos = 0usize;
-        const MAX_CONSECUTIVE_EOS: usize = 3;
-
-        for _i in 0..max_new_tokens {
-            // Run one forward pass to get logits
-            let input = context_window(&output_ids, seq_len, pad_token_id);
-            let logits_tensor = model.predict_logits(&input)?;
-            // logits_tensor shape: [1, seq_len, vocab_size]
-            // Extract the last position's logits: slice [0, seq_len-1, :]
+        for _ in 0..max_new_tokens.saturating_sub(generated_ids.len()) {
+            let last_index = context_last_index(output_ids.len(), seq_len)?;
+            let logits_tensor = model.predict_logits(&output_ids)?;
             let last_logits = logits_tensor
-                .slice([0..1, seq_len - 1..seq_len, 0..vocab_size])
+                .slice([0..1, last_index..last_index + 1, 0..vocab_size])
                 .reshape([vocab_size]);
             let logits_data = last_logits.into_data();
             let logits_vec: Vec<f32> = logits_data.to_vec().unwrap_or_default();
 
-            // Sample next token
             let next_token = sample_token(
                 &logits_vec,
                 temperature,
                 top_k,
                 repetition_penalty,
                 &recent_tokens,
+                &blocked_token_ids,
             );
 
-            // Stop at EOS
             if Some(next_token) == eos_id {
-                consecutive_eos += 1;
-                if full_text.is_empty() && consecutive_eos < MAX_CONSECUTIVE_EOS {
-                    continue; // skip EOS at the very start (up to N times)
-                }
                 break;
             }
-            consecutive_eos = 0;
 
             output_ids.push(next_token);
+            generated_ids.push(next_token);
             recent_tokens.push(next_token);
             if recent_tokens.len() > RECENT_WINDOW {
                 recent_tokens.remove(0);
             }
 
-            // Decode and print
-            let piece = sp.id_to_piece(next_token);
-            let text = piece_to_text(&piece);
-            full_text.push_str(&text);
-            print!("{text}");
-            io::stdout().flush().ok();
+            full_text = sp.decode(&generated_ids);
+
+            if parse_reply(&full_text).is_some() {
+                break;
+            }
         }
 
-        println!(); // newline after generation
         Ok(full_text)
     };
 
-    // --- One-shot mode ---
-    if let Some(prompt) = &args.prompt {
-        // Send prompt as-is (no role prefixes)
-        let _ = generate(
-            prompt,
-            args.max_new_tokens,
-            args.temperature,
-            args.top_k,
-            args.repetition_penalty,
-        )?;
+    let generate_for_player =
+        |npc: NpcId, player_message: &str, language_mode: LanguageMode| -> Result<String> {
+            let target_language = language_mode.resolve(player_message);
+            let prompt =
+                build_runtime_prompt(npc, player_message, prompt_contract, target_language);
+            let mut generated = generate(
+                &format!("{prompt}\n"),
+                args.max_new_tokens,
+                args.temperature,
+                args.top_k,
+                args.repetition_penalty,
+                false,
+            )?;
+            if language_ok(&generated, target_language) {
+                return Ok(generated);
+            }
+
+            let greedy = generate(
+                &format!("{prompt}\n"),
+                args.max_new_tokens,
+                0.0,
+                1,
+                args.repetition_penalty,
+                false,
+            )?;
+            if language_ok(&greedy, target_language) {
+                return Ok(greedy);
+            }
+            if parse_reply(&generated).is_none() && parse_reply(&greedy).is_some() {
+                generated = greedy;
+            }
+
+            let forced = generate(
+                &format!("{prompt}\n"),
+                args.max_new_tokens,
+                0.0,
+                1,
+                args.repetition_penalty,
+                true,
+            )?;
+            if language_ok(&forced, target_language) {
+                return Ok(forced);
+            }
+            if parse_reply(&generated).is_none() && parse_reply(&forced).is_some() {
+                generated = forced;
+            }
+
+            let retry_temperature = args.retry_temperature.max(args.temperature);
+            let retry_top_k = args.top_k.max(20);
+            for _ in 0..args.language_retries {
+                let retry = generate(
+                    &format!("{prompt}\n"),
+                    args.max_new_tokens,
+                    retry_temperature,
+                    retry_top_k,
+                    args.repetition_penalty,
+                    true,
+                )?;
+                if language_ok(&retry, target_language) {
+                    return Ok(retry);
+                }
+                if parse_reply(&generated).is_none() && parse_reply(&retry).is_some() {
+                    generated = retry;
+                }
+            }
+
+            Ok(generated)
+        };
+
+    let mut npc = match (&args.npc, &args.prompt) {
+        (Some(value), _) => NpcId::parse(value)?,
+        (None, Some(_)) => NpcId::Mew,
+        (None, None) => ask_npc()?,
+    };
+
+    if let Some(player_message) = &args.prompt {
+        println!("me>\n{player_message}\n");
+        let generated = generate_for_player(npc, player_message, language_mode)?;
+        print_reply(npc, &generated, args.show_raw);
         return Ok(());
     }
 
-    // --- Interactive mode ---
-    eprintln!("interactive mode — type a message, press Enter. Type 'quit' or 'exit' to stop.");
-    let stdin = io::stdin();
+    eprintln!(
+        "talking to {}. commands: /npc mew|jin, /lang auto|th|en, /quit",
+        npc.label()
+    );
+
     loop {
         print!("me> ");
         io::stdout().flush()?;
 
         let mut input = String::new();
-        match stdin.read_line(&mut input) {
+        match io::stdin().read_line(&mut input) {
             Ok(0) => {
                 eprintln!("\n[EOF] exiting.");
                 break;
@@ -371,46 +742,104 @@ fn main() -> Result<()> {
                 break;
             }
         }
+
         let input = input.trim();
         if input.is_empty() {
-            continue; // skip blank lines instead of exiting
+            continue;
         }
-        if input == "quit" || input == "exit" || input == "q" {
+        if input == "quit" || input == "exit" || input == "q" || input == "/quit" {
             eprintln!("bye!");
             break;
         }
+        if handle_command(input, &mut npc, &mut language_mode)? {
+            continue;
+        }
 
-        // Send prompt directly as raw text, matching the training format:
-        //   training sequence: "คำถาม\nคำตอบ</s>"
-        // The model sees the question + newline as context, then generates the answer.
-        // We append "\n" so the model knows the question is done and should start answering.
-        let prompt = format!("{input}\n");
-        print!("ai> ");
-        io::stdout().flush()?;
-        let _ = generate(
-            &prompt,
-            args.max_new_tokens,
-            args.temperature,
-            args.top_k,
-            args.repetition_penalty,
-        )?;
+        let generated = generate_for_player(npc, input, language_mode)?;
+        println!();
+        print_reply(npc, &generated, args.show_raw);
     }
 
     Ok(())
+}
+
+fn ask_npc() -> Result<NpcId> {
+    loop {
+        print!("npc (mew/jin)> ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        match NpcId::parse(input.trim()) {
+            Ok(npc) => return Ok(npc),
+            Err(err) => eprintln!("{err}"),
+        }
+    }
+}
+
+fn handle_command(input: &str, npc: &mut NpcId, language_mode: &mut LanguageMode) -> Result<bool> {
+    let Some(rest) = input.strip_prefix('/') else {
+        return Ok(false);
+    };
+
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let command = parts.next().unwrap_or("").trim();
+    let value = parts.next().unwrap_or("").trim();
+
+    match command {
+        "npc" => {
+            *npc = NpcId::parse(value)?;
+            println!("npc set to {}", npc.label());
+        }
+        "lang" => {
+            *language_mode = LanguageMode::parse(value)?;
+            println!("language set to {}", language_mode.label());
+        }
+        "help" => {
+            println!("commands: /npc mew|jin, /lang auto|th|en, /quit");
+        }
+        other => bail!("unknown command '/{other}'"),
+    }
+
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Pad/truncate context to seq_len (left-pad with pad_token_id).
-fn context_window(tokens: &[u32], seq_len: usize, pad_token_id: u32) -> Vec<u32> {
-    if tokens.len() >= seq_len {
-        tokens[(tokens.len() - seq_len)..].to_vec()
-    } else {
-        let pad_count = seq_len - tokens.len();
-        let mut padded = vec![pad_token_id; pad_count];
-        padded.extend_from_slice(tokens);
-        padded
+fn context_last_index(token_count: usize, seq_len: usize) -> Result<usize> {
+    if token_count == 0 {
+        bail!("prompt tokenized to empty sequence");
     }
+    Ok(token_count.min(seq_len) - 1)
+}
+
+fn detect_text_language(text: &str) -> Option<ChatLanguage> {
+    if text.chars().any(is_thai_char) {
+        return Some(ChatLanguage::Thai);
+    }
+    if text.chars().any(|ch| ch.is_ascii_alphabetic()) {
+        return Some(ChatLanguage::English);
+    }
+    None
+}
+
+fn language_ok(generated: &str, target: Option<ChatLanguage>) -> bool {
+    let Some(target) = target else {
+        return true;
+    };
+    let Some(reply) = parse_reply(generated) else {
+        return false;
+    };
+    match target {
+        ChatLanguage::Thai => reply.message.chars().any(is_thai_char),
+        ChatLanguage::English => {
+            reply.message.chars().any(|ch| ch.is_ascii_alphabetic())
+                && !reply.message.chars().any(is_thai_char)
+        }
+    }
+}
+
+fn is_thai_char(ch: char) -> bool {
+    ('\u{0e00}'..='\u{0e7f}').contains(&ch)
 }

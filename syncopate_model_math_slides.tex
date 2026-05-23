@@ -251,19 +251,21 @@
 \end{frame}
 
 \begin{frame}{Chat Loss Masking}
-  Training data is normalized as:
+  NPC training data is normalized as:
 
   \[
-    \{\text{input},\text{output},\text{source}\}
+    \{\text{npc},\text{input},\text{output}\}
   \]
 
-  The token sequence is:
+  The visible player input stays natural, while the trainer prepends NPC and
+  language control tokens internally:
 
   \[
-    [\text{prompt tokens},\text{response tokens},\text{EOS}]
+    [\texttt{<npc>},\texttt{<lang>},\text{input tokens},\text{output tokens},\text{EOS}]
   \]
 
-  The model sees the prompt, but loss is computed only on response tokens:
+  The model sees the NPC, reply language, and player prompt, but loss is
+  computed only on output tokens:
 
   \[
     \mathcal{L}
@@ -291,7 +293,8 @@
     \text{targets} = [20, 5, 3]
   \]
 
-  If the prompt is token \(10\), mask out the prompt target:
+  If the prompt is \([10,20]\) and the response is \([5,3]\), mask out prompt
+  targets:
 
   \[
     m = [0, 1, 1]

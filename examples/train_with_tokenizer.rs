@@ -360,13 +360,24 @@ fn load_samples(dir: &Path, max_samples: usize) -> Result<Vec<(String, String)>>
                             .or_else(|| val.get("response"))
                             .and_then(|v| v.as_str())
                         {
-                            let prompt = val
+                            let raw_prompt = val
                                 .get("input")
                                 .or_else(|| val.get("prompt"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .trim()
                                 .to_owned();
+                            let prompt = if let Some(npc) = val.get("npc").and_then(|v| v.as_str())
+                            {
+                                format!(
+                                    "<{}>\n{}\n{}",
+                                    npc.trim().to_lowercase(),
+                                    language_control_token(&raw_prompt),
+                                    raw_prompt
+                                )
+                            } else {
+                                raw_prompt
+                            };
                             let response = response.trim().to_owned();
                             if !response.is_empty() {
                                 samples.push((prompt, response));
@@ -404,6 +415,18 @@ fn load_samples(dir: &Path, max_samples: usize) -> Result<Vec<(String, String)>>
         }
     }
     Ok(samples)
+}
+
+fn language_control_token(text: &str) -> &'static str {
+    if text.chars().any(is_thai_char) {
+        "<th>"
+    } else {
+        "<en>"
+    }
+}
+
+fn is_thai_char(ch: char) -> bool {
+    ('\u{0e00}'..='\u{0e7f}').contains(&ch)
 }
 
 fn parse_budget(s: &str) -> Result<SyncopateParameterBudget> {
@@ -581,6 +604,17 @@ fn main() -> Result<()> {
         bail!("no training samples found in {}", args.train_dir.display());
     }
     println!("loaded {} samples", samples.len());
+    let prompt_contract = if samples
+        .iter()
+        .any(|(prompt, _)| prompt.contains("\n<th>\n") || prompt.contains("\n<en>\n"))
+    {
+        "npc-lang-v1"
+    } else {
+        "plain"
+    };
+    fs::write(args.run_dir.join("prompt_contract.txt"), prompt_contract)
+        .with_context(|| "failed to write prompt_contract.txt")?;
+    println!("prompt_contract={prompt_contract}");
 
     // Detect chat data: any sample with a non-empty prompt.
     let has_chat_data = samples.iter().any(|(prompt, _)| !prompt.is_empty());

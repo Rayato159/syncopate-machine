@@ -519,12 +519,13 @@ impl<B: Backend> SyncopateModel<B> {
         }
 
         let input = context_window(context, self.config().seq_len, pad_token_id);
+        let last_index = context_last_index(context, self.config().seq_len)?;
         let input = tensor_from_u32::<B, 2>(input, [1, self.config().seq_len], device)?;
         let logits = self.forward(input);
         let last_logits = logits
             .slice([
                 0..1,
-                self.config().seq_len - 1..self.config().seq_len,
+                last_index..last_index + 1,
                 0..self.config().vocab_size,
             ])
             .reshape([self.config().vocab_size]);
@@ -1324,9 +1325,17 @@ fn context_window(context: &[u32], seq_len: usize, pad_token_id: u32) -> Vec<u32
     } else {
         context
     };
-    let start = seq_len - suffix.len();
-    input[start..].copy_from_slice(suffix);
+    input[..suffix.len()].copy_from_slice(suffix);
     input
+}
+
+fn context_last_index(context: &[u32], seq_len: usize) -> Result<usize> {
+    if context.is_empty() {
+        return Err(Error::Inference(
+            "context must contain at least one token".to_string(),
+        ));
+    }
+    Ok(context.len().min(seq_len) - 1)
 }
 
 fn argmax(values: &[f32]) -> Result<usize> {

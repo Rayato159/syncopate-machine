@@ -5,4 +5,4 @@
 /examples/data/*
 !/examples/data/.gitkeep
 /papers
-/examples/data_npc
+/examples/data
