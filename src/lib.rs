@@ -1,6 +1,6 @@
 //! # syncopate-machine
 //!
-//! A small decoder-only transformer for game NPC chat, powered by
+//! A small decoder-only transformer for game NPC/action chat, powered by
 //! [Burn](https://github.com/tracel-ai/burn).
 //!
 //! ## Quick Start
@@ -18,9 +18,8 @@
 //!         .batch_size(16).seq_len(128).steps(50_000)
 //!         .build()?;
 //!
-//!     let sequences = vec![vec![1, 2, 3, 4], vec![1, 2, 5, 4]];
+//!     let sequences = vec![vec![5, 17, 3, 9, 2], vec![7, 16, 3, 11, 2]];
 //!     let report = trainer.train_on_token_sequences(&sequences)?;
-//!     // or: trainer.train_on_chat_sequences(&chat_pairs)?;
 //!     Ok(())
 //! }
 //! ```
@@ -34,10 +33,10 @@
 //!     let model = ChatModel::load("checkpoints/latest.mpk")?;
 //!
 //!     // One-shot
-//!     let tokens = model.generate(&[1, 2, 3], GenerationConfig::default())?;
+//!     let ids = model.generate(&[5, 17, 3], GenerationConfig::default())?;
 //!
 //!     // Streaming
-//!     model.generate_stream(&[1, 2, 3], GenerationConfig::default(), |id, _| {
+//!     model.generate_stream(&[5, 17, 3], GenerationConfig::default(), |id, _| {
 //!         print!("{id} "); true
 //!     })?;
 //!     Ok(())
@@ -67,6 +66,10 @@ pub(crate) mod param_io;
 pub(crate) mod runtime;
 pub(crate) mod screen;
 pub(crate) mod tile;
+
+// ---- WASM module (only compiled for wasm32 target with the wasm feature) ----
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 // ---- High-level API re-exports ----
 #[cfg(not(feature = "cuda"))]

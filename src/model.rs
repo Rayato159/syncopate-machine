@@ -150,6 +150,10 @@ impl SyncopateModelConfig {
         Self::from_dimensions(vocab_size, seq_len, 2, 96, 4, 1, 256)
     }
 
+    pub fn preset_action(vocab_size: usize, seq_len: usize) -> Self {
+        Self::from_dimensions(vocab_size, seq_len, 2, 64, 4, 1, 128)
+    }
+
     pub fn preset_5m(vocab_size: usize, seq_len: usize) -> Self {
         Self::from_dimensions(vocab_size, seq_len, 8, 192, 6, 2, 512)
     }
@@ -197,7 +201,7 @@ impl SyncopateModelConfig {
             .saturating_add(self.d_model)
     }
 
-    fn from_dimensions(
+    pub(crate) fn from_dimensions(
         vocab_size: usize,
         seq_len: usize,
         layers: usize,
@@ -433,8 +437,11 @@ impl<B: Backend> SyncopateModel<B> {
 
     pub fn forward(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let [batch, seq_len] = tokens.dims();
-        let one_hot = tokens.one_hot::<3>(self.config().vocab_size).float();
-        let mut x = linear3(one_hot, self.token_embedding.val()).reshape([
+        // Use `select` instead of `one_hot` + matmul. Burn's `one_hot` calls
+        // `into_scalar()` internally for bounds validation, which panics on WASM
+        // because synchronous blocking futures are unsupported there.
+        let indices = tokens.reshape([batch * seq_len]);
+        let mut x = self.token_embedding.val().select(0, indices).reshape([
             batch,
             seq_len,
             self.config().d_model,

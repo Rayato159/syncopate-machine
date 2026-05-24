@@ -1,20 +1,18 @@
 [package]
 name = "syncopate-machine"
 authors = ["Ruangyot Nanchiang <rayato159@gmail.com>"]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "A small Rust transformer for game NPC chat, powered by Burn."
+description = "A tiny Rust transformer for game NPC/action chat, powered by Burn."
 readme = "README.md"
 repository = "https://github.com/Rayato159/syncopate-machine"
-keywords = ["npc", "chatbot", "transformer", "language-model", "burn"]
+keywords = ["npc", "chatbot", "transformer", "wasm", "burn"]
 categories = ["science", "text-processing"]
 include = [
     "src/**",
-    "examples/chat_with_tokenizer.rs",
-    "examples/train_with_tokenizer.rs",
-    "examples/plot_loss.py",
-    "examples/data/.gitkeep",
+    "examples/train_action_model.rs",
+    "examples/build_action_data.py",
     "tests/**",
     "Cargo.toml",
     "README.md",
@@ -26,16 +24,22 @@ include = [
 burn = { version = "0.21", default-features = false, features = ["std", "autodiff", "flex"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["console", "Window", "Response", "Request", "RequestInit"] }
+getrandom = { version = "0.3", optional = true, features = ["wasm_js"] }
+getrandom_04 = { package = "getrandom", version = "0.4", optional = true, features = ["wasm_js"] }
+wgpu = { version = "29", default-features = false, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-sentencepiece-rs = "0.2.2"
 rand = "0.8"
-csv = "1"
-rayon = "1.10"
 
 [features]
 default = []
 cuda = ["burn/cuda"]
+wgpu = ["burn/wgpu"]
+wasm = ["burn/wgpu", "wasm-bindgen", "wasm-bindgen-futures", "js-sys", "web-sys", "getrandom", "getrandom_04", "dep:wgpu"]

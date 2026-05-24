@@ -3,8 +3,8 @@
 Hey, thanks for wanting to help with `syncopate-machine`.
 
 This crate is meant to stay small, readable, and honest about what it does:
-Burn-backed Syncopate model code, SentencePiece integration, training/inference
-examples, and checkpoint persistence. Good patches are very welcome.
+Burn-backed Syncopate model code, action/ID-sequence training examples, browser
+inference, and checkpoint persistence. Good patches are very welcome.
 
 ## Before You Start
 
@@ -24,7 +24,7 @@ Good contributions include:
 
 Please avoid:
 
-- Adding large datasets, checkpoints, tokenizer models, or generated artifacts.
+- Adding large datasets, checkpoints, model artifacts, or generated junk.
 - Claiming benchmark numbers unless you actually ran the benchmark and recorded
   the setup.
 - Breaking the default CPU/Flex path just to make a custom GPU setup happy.

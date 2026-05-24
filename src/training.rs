@@ -1,11 +1,11 @@
 //! High-level training API with a builder pattern.
 //!
-//! The [`Trainer`] struct wraps model construction, token-sequence training,
+//! The [`Trainer`] struct wraps model construction, ID-sequence training,
 //! and checkpoint management behind a single ergonomic interface with sensible
 //! defaults.
 //!
-//! Users encode their own text into token IDs using any tokenizer they choose,
-//! then pass the `Vec<Vec<u32>>` sequences to [`Trainer::train_on_token_sequences`].
+//! Users pass `Vec<Vec<u32>>` sequences. Those IDs can be text tokens, action
+//! IDs, or any other tiny app vocabulary.
 //!
 //! # Example
 //!
@@ -22,7 +22,7 @@
 //!         .device(auto_device()?)
 //!         .build()?;
 //!
-//!     // Token sequences from YOUR tokenizer
+//!     // Integer ID sequences from your app vocabulary.
 //!     let sequences = vec![
 //!         vec![1, 2, 3, 4, 5],
 //!         vec![1, 2, 6, 7, 5],
@@ -87,7 +87,7 @@ impl TrainingReport {
 /// High-level trainer that bundles a model and training config.
 ///
 /// Construct via [`Trainer::builder()`] and the [`TrainerBuilder`] struct.
-/// Users provide token sequences (`Vec<Vec<u32>>`) from their own tokenizer.
+/// Users provide integer ID sequences (`Vec<Vec<u32>>`).
 pub struct Trainer {
     model: DefaultSyncopateModel,
     training_config: ModelTrainingConfig,
@@ -114,10 +114,10 @@ impl Trainer {
         TrainerBuilder::new()
     }
 
-    /// Trains the model on the provided token sequences.
+    /// Trains the model on the provided ID sequences.
     ///
-    /// Each inner `Vec<u32>` is a tokenized text sample. Use your own
-    /// tokenizer to produce these sequences before calling this method.
+    /// Each inner `Vec<u32>` is one app-defined sequence. For the website this
+    /// means action/language IDs, not text tokens.
     ///
     /// The `on_step` callback is invoked after each optimizer step with
     /// `(step_index, loss_value)`.
@@ -339,7 +339,7 @@ impl TrainerBuilder {
 
     /// Sets the vocabulary size (required).
     ///
-    /// This is the number of distinct token IDs your tokenizer produces.
+    /// This is the number of distinct IDs your app vocabulary uses.
     pub fn vocab_size(mut self, size: usize) -> Self {
         self.vocab_size = Some(size);
         self

@@ -1,22 +1,22 @@
 //! High-level inference API.
 //!
-//! Provides [`GenerationConfig`] and [`ChatModel`] for easy token-level
-//! text generation. Users encode/decode text with their own tokenizer.
+//! Provides [`GenerationConfig`] and [`ChatModel`] for easy integer-ID
+//! generation. IDs can be text tokens, action IDs, or any app vocabulary.
 //!
-//! # Non-streaming (all tokens at once)
+//! # Non-streaming (all IDs at once)
 //!
 //! ```rust,no_run
 //! use syncopate_machine::prelude::*;
 //!
 //! fn main() -> syncopate_machine::Result<()> {
 //!     let model = ChatModel::load("checkpoints/latest.mpk")?;
-//!     let token_ids = model.generate(&[1, 2, 3], GenerationConfig::default())?;
-//!     println!("generated tokens: {:?}", token_ids);
+//!     let ids = model.generate(&[1, 2, 3], GenerationConfig::default())?;
+//!     println!("generated IDs: {:?}", ids);
 //!     Ok(())
 //! }
 //! ```
 //!
-//! # Streaming (token by token, like ChatGPT)
+//! # Streaming (ID by ID)
 //!
 //! ```rust,no_run
 //! use syncopate_machine::prelude::*;
@@ -26,9 +26,9 @@
 //!     let full = model.generate_stream(
 //!         &[1, 2, 3],
 //!         GenerationConfig::default(),
-//!         |token_id, _index| {
-//!             // Decode with YOUR tokenizer and print word-by-word
-//!             print!("{} ", token_id);
+//!         |id, _index| {
+//!             // Map the ID to whatever your app needs.
+//!             print!("{} ", id);
 //!             true // return false to stop early
 //!         },
 //!     )?;
@@ -47,10 +47,10 @@ use std::path::{Path, PathBuf};
 // GenerationConfig
 // ---------------------------------------------------------------------------
 
-/// Configuration for text generation.
+/// Configuration for next-ID generation.
 #[derive(Clone, Debug)]
 pub struct GenerationConfig {
-    /// Maximum number of new tokens to generate (default: 64).
+    /// Maximum number of new IDs to generate (default: 64).
     pub max_new_tokens: usize,
     /// Pad token ID (default: 0).
     pub pad_token_id: u32,
@@ -69,11 +69,11 @@ impl Default for GenerationConfig {
 // ChatModel
 // ---------------------------------------------------------------------------
 
-/// High-level model for token-level text generation.
+/// High-level model for next-ID generation.
 ///
-/// Load a trained checkpoint and generate token IDs in a single call.
+/// Load a trained checkpoint and generate IDs in a single call.
 /// `ChatModel` automatically discovers the model config next to the
-/// checkpoint file. Users bring their own tokenizer to encode/decode text.
+/// checkpoint file. The meaning of each ID belongs to the caller.
 ///
 /// # Example
 ///
@@ -82,8 +82,8 @@ impl Default for GenerationConfig {
 ///
 /// fn main() -> syncopate_machine::Result<()> {
 ///     let model = ChatModel::load("checkpoints/latest.mpk")?;
-///     let token_ids = model.generate(&[1, 2, 3], GenerationConfig::default())?;
-///     println!("generated tokens: {:?}", token_ids);
+///     let ids = model.generate(&[1, 2, 3], GenerationConfig::default())?;
+///     println!("generated IDs: {:?}", ids);
 ///     Ok(())
 /// }
 /// ```
@@ -145,10 +145,10 @@ impl ChatModel {
         })
     }
 
-    /// Generate token IDs from a prompt token sequence.
+    /// Generate IDs from a prompt ID sequence.
     ///
-    /// Returns all generated tokens (prompt + new) at once.
-    /// For streaming / token-by-token output, use [`Self::generate_stream`].
+    /// Returns all generated IDs (prompt + new) at once.
+    /// For streaming / ID-by-ID output, use [`Self::generate_stream`].
     pub fn generate(&self, prompt: &[u32], config: GenerationConfig) -> Result<Vec<u32>> {
         let inference_config = ModelInferenceConfig {
             max_new_tokens: config.max_new_tokens,
@@ -160,15 +160,15 @@ impl ChatModel {
         Ok(output.token_ids)
     }
 
-    /// Generate token IDs one at a time, invoking a callback for each newly
-    /// produced token.
+    /// Generate IDs one at a time, invoking a callback for each newly
+    /// produced ID.
     ///
-    /// This enables streaming / word-by-word output similar to ChatGPT.
-    /// The callback receives `(token_id, index)` where `index` is the
-    /// zero-based position of the *new* token (0 = first generated token).
+    /// This enables streaming output in browser/game UIs.
+    /// The callback receives `(id, index)` where `index` is the
+    /// zero-based position of the *new* ID (0 = first generated ID).
     /// Return `false` from the callback to stop generation early.
     ///
-    /// Returns the full output sequence (prompt + generated tokens).
+    /// Returns the full output sequence (prompt + generated IDs).
     ///
     /// # Example
     ///
@@ -182,10 +182,9 @@ impl ChatModel {
     ///     let full_output = model.generate_stream(
     ///         prompt,
     ///         GenerationConfig::default(),
-    ///         |token_id, _index| {
-    ///             // Stream each token as it is produced.
-    ///             // Decode with YOUR tokenizer and print word-by-word.
-    ///             print!("{} ", token_id); // Replace with actual decoding
+    ///         |id, _index| {
+    ///             // Stream each ID as it is produced.
+    ///             print!("{} ", id);
     ///             true // return false to stop early
     ///         },
     ///     )?;
