@@ -111,98 +111,17 @@ vocab size: **23 IDs**. no SentencePiece. no BPE. just vibes (and integers).
 
 ## 📐 the math
 
-this is a **LLaMA-style decoder-only transformer** with grouped-query attention (GQA), rotary position embeddings (RoPE), RMSNorm, and SwiGLU feed-forward. here's exactly what happens inside:
+this is a **LLaMA-style decoder-only transformer** with grouped-query attention (GQA), rotary position embeddings (RoPE), RMSNorm, and SwiGLU feed-forward.
 
-### model architecture
-
-```
-Input tokens → Token Embedding
-    ┌─────────────────────────────┐
-    │  ×N SyncopateBlock          │
-    │  ┌─────────────────────────┐│
-    │  │ RMSNorm → Attention → + ││
-    │  │ RMSNorm → SwiGLU FFN → +││
-    │  └─────────────────────────┘│
-    └─────────────────────────────┘
-Final RMSNorm → Output Projection (weight-tied)
-```
-
-### RMSNorm
-
-replaces LayerNorm. no centering, just scale:
-
-$$\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_{i=1}^{d} x_i^2 + \epsilon}} \odot w$$
-
-### rotary position embedding (RoPE)
-
-encodes position by rotating pairs of dimensions at different frequencies. no learned position embeddings needed:
-
-$$\theta_k = \theta^{-2k / d_{\text{head}}}$$
-
-$$\text{RoPE}(x, m)_{2k:2k+1} = \begin{pmatrix} x_{2k} \cos(m\theta_k) - x_{2k+1} \sin(m\theta_k) \\ x_{2k} \sin(m\theta_k) + x_{2k+1} \cos(m\theta_k) \end{pmatrix}$$
-
-where $m$ is the position index and $\theta = 10000$ (the base frequency).
-
-### grouped-query attention (GQA)
-
-standard multi-head attention but $n_{\text{kv}} < n_{\text{heads}}$ — K/V heads are shared and repeated. saves memory, runs faster:
-
-$$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right)V$$
-
-where $M$ is a causal mask ($-\infty$ for future positions). with GQA, $K$ and $V$ have `kv_heads` copies, each repeated $\lceil n_{\text{heads}} / n_{\text{kv}} \rceil$ times to match $Q$.
-
-### SwiGLU feed-forward
-
-the FFN uses a gated linear unit with SiLU activation:
-
-$$\text{FFN}(x) = \bigl(\text{SiLU}(xW_{\text{gate}}) \odot xW_{\text{up}}\bigr) W_{\text{down}}$$
-
-where $\text{SiLU}(z) = z \cdot \sigma(z)$ and $\sigma$ is the sigmoid function.
-
-### 🧮 worked example: 71K parameter budget
-
-let's trace through the **action preset** — the smallest practical config:
-
-| parameter | value |
-|-----------|-------|
-| vocab size $V$ | 23 |
-| sequence length | 64 |
-| layers $N$ | 2 |
-| model dimension $d$ | 64 |
-| attention heads | 4 |
-| KV heads | 1 |
-| head dimension $d_k$ | 64 / 4 = 16 |
-| FFN intermediate | 128 |
-
-**step 1: embedding layer**
-
-$$P_{\text{embed}} = V \times d = 23 \times 64 = 1{,}472$$
-
-**step 2: attention per layer** (weight-tied output uses same projection)
-
-$$P_{\text{attn}} = \underbrace{d^2}_{W_Q} + \underbrace{2 \cdot d \cdot (n_{\text{kv}} \cdot d_k)}_{W_K + W_V} + \underbrace{d^2}_{W_O} = 64^2 + 2 \times 64 \times 16 + 64^2 = 10{,}240$$
-
-**step 3: SwiGLU FFN per layer** (3 weight matrices)
-
-$$P_{\text{ffn}} = 3 \times d \times d_{\text{ff}} = 3 \times 64 \times 128 = 24{,}576$$
-
-**step 4: RMSNorm per layer** (2 norms × $d$ params each)
-
-$$P_{\text{norm}} = 2 \times d = 2 \times 64 = 128$$
-
-**step 5: total**
-
-$$P_{\text{total}} = \underbrace{1{,}472}_{\text{embed}} + N \times (10{,}240 + 24{,}576 + 128) + \underbrace{64}_{\text{final norm}}$$
-
-$$= 1{,}472 + 2 \times 34{,}944 + 64 = \boxed{71{,}424 \text{ parameters}}$$
-
-that's **~71K params** — small enough to load in the browser in under 100ms. the `.mpk` checkpoint? **286 KB**. try that with your 7B model 😌
+for the full mathematical deep-dive with worked examples and calculations, see **[slides.tex](slides.tex)** — a 17-slide Beamer presentation covering every component from RMSNorm to the 71K parameter breakdown.
 
 ### 📊 parameter presets
 
 | preset | layers | $d$ | heads | KV heads | FFN | params |
 |--------|--------|-----|-------|----------|-----|--------|
 | action | 2 | 64 | 4 | 1 | 128 | ~71K |
+
+the smallest preset (action) weighs **71,424 params** — small enough to load in the browser in under 100ms. the `.mpk` checkpoint? **286 KB**. try that with your 7B model 😌
 
 ---
 

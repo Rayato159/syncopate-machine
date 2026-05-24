@@ -1,0 +1,648 @@
+\documentclass[10pt, aspectratio=169]{beamer}
+
+% ── Theme & Colors ──────────────────────────────────────────────
+\usetheme{Madrid}
+\usecolortheme{default}
+
+\definecolor{attnblue}{RGB}{0,102,204}
+\definecolor{ffngreen}{RGB}{0,153,76}
+\definecolor{normorg}{RGB}{230,126,34}
+\definecolor{embpurple}{RGB}{128,0,128}
+\definecolor{lightbg}{RGB}{245,245,250}
+
+\setbeamercolor{structure}{fg=attnblue}
+\setbeamercolor{frametitle}{bg=attnblue!90!black, fg=white}
+\setbeamercolor{title}{bg=attnblue!90!black, fg=white}
+\setbeamercolor{block title}{bg=attnblue!80, fg=white}
+\setbeamercolor{block body}{bg=lightbg}
+\setbeamercolor{block title alerted}{bg=red!70!black, fg=white}
+\setbeamercolor{block title example}{bg=ffngreen!80, fg=white}
+
+% ── Packages ────────────────────────────────────────────────────
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, fit, calc, decorations.pathreplacing}
+\usepackage{array}
+\usepackage{xcolor}
+
+% ── Metadata ────────────────────────────────────────────────────
+\title[Syncopate-Machine]{Syncopate-Machine\\[4pt]
+  \large A Tiny Transformer for Action Sequences}
+\subtitle{Architecture Deep Dive --- From Math to 71K Parameters}
+\author{Syncopate-Machine Project}
+\date{\today}
+\inframe{}
+
+% ── Footer with frame numbers ──────────────────────────────────
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,center]
+      {author in head/foot}%
+      \usebeamerfont{author in head/foot}\insertshortauthor
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,center]
+      {title in head/foot}%
+      \usebeamerfont{title in head/foot}\insertshorttitle
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,right]
+      {date in head/foot}%
+      \usebeamerfont{date in head/foot}
+      \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
+    \end{beamercolorbox}}%
+  \vskip0pt%
+}
+
+\begin{document}
+
+% ================================================================
+%  TITLE
+% ================================================================
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+
+% ================================================================
+\section{Introduction}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{What Is It?}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      \begin{itemize}
+        \item \textbf{Decoder-only} transformer (LLaMA-style)
+        \item Predicts \alert{integer action IDs}, not text tokens
+        \item Runs in browser via \textbf{WASM / WebGPU}
+        \item Built on the \textbf{Burn} deep-learning framework
+        \item Smallest preset: \alert{71\,K parameters}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      \centering
+      \begin{tikzpicture}[
+        box/.style={draw, rounded corners=3pt, minimum width=3.2cm,
+                     minimum height=0.7cm, align=center, font=\small},
+        >=Stealth
+      ]
+        \node[box, fill=embpurple!15] (tok) {Action IDs\\$[3, 17, 5, \ldots]$};
+        \node[box, fill=attnblue!15, below=0.4cm of tok] (model) {Syncopate\\Transformer};
+        \node[box, fill=ffngreen!15, below=0.4cm of model] (out) {Next Action\\Prediction};
+        \draw[->, thick] (tok) -- (model);
+        \draw[->, thick] (model) -- (out);
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Architecture}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{Architecture Diagram}
+  \centering
+  \begin{tikzpicture}[
+    block/.style={draw, rounded corners=3pt, minimum width=6.4cm,
+                  minimum height=0.65cm, align=center, font=\small},
+    lbl/.style={font=\scriptsize\itshape, text=gray},
+    arr/.style={-{Stealth[length=5pt]}, thick},
+    >=Stealth
+  ]
+    % Input
+    \node[block, fill=embpurple!12] (input) {Input Tokens $\mathbf{x} \in \mathbb{Z}^{L}$};
+
+    % Embedding
+    \node[block, fill=embpurple!22, below=0.35cm of input] (emb)
+      {Token Embedding\quad $\mathbf{E} \in \mathbb{R}^{V \times d}$};
+
+    % Block (dashed)
+    \node[block, fill=normorg!18, below=0.35cm of emb] (norm1)
+      {{\color{normorg}\textbf{RMSNorm}}};
+    \node[block, fill=attnblue!18, below=0.3cm of norm1] (attn)
+      {{\color{attnblue}\textbf{Causal Attention}} (RoPE + GQA)};
+    \node[below=0.15cm of attn, lbl] (res1) {$\bigoplus$ residual};
+
+    \node[block, fill=normorg!18, below=0.25cm of res1] (norm2)
+      {{\color{normorg}\textbf{RMSNorm}}};
+    \node[block, fill=ffngreen!18, below=0.3cm of norm2] (ffn)
+      {{\color{ffngreen}\textbf{SwiGLU FFN}}};
+    \node[below=0.15cm of ffn, lbl] (res2) {$\bigoplus$ residual};
+
+    % Fit box around block
+    \node[draw, dashed, rounded corners=5pt, inner sep=6pt,
+          fit=(norm1)(attn)(res1)(norm2)(ffn)(res2),
+          label={[font=\small\bfseries]left:{$\times N$}}] (blk) {};
+
+    % Final norm + output
+    \node[block, fill=normorg!18, below=0.4cm of blk] (fnorm)
+      {Final {\color{normorg}\textbf{RMSNorm}}};
+    \node[block, fill=embpurple!22, below=0.35cm of fnorm] (proj)
+      {Output Projection\quad ($\mathbf{W} = \mathbf{E}^{\!\top}$, weight-tied)};
+
+    % Arrows
+    \draw[arr] (input) -- (emb);
+    \draw[arr] (emb)   -- (norm1);
+    \draw[arr] (norm1) -- (attn);
+    \draw[arr] (attn)  -- (res1);
+    \draw[arr] (res1)  -- (norm2);
+    \draw[arr] (norm2) -- (ffn);
+    \draw[arr] (ffn)   -- (res2);
+    \draw[arr] (blk.south) -- (fnorm);
+    \draw[arr] (fnorm) -- (proj);
+  \end{tikzpicture}
+\end{frame}
+
+% ================================================================
+\section{Normalization}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{RMSNorm}
+  \begin{block}{Formula}
+    \[
+      \text{\color{normorg}RMSNorm}(\mathbf{x})
+      \;=\;
+      \frac{\mathbf{x}}{\sqrt{\operatorname{mean}(\mathbf{x}^{2}) + \varepsilon}}
+      \;\odot\;
+      \mathbf{w}
+    \]
+  \end{block}
+
+  \medskip
+
+  \begin{itemize}
+    \item \textbf{No centering} (no mean subtraction) --- just root-mean-square scaling
+    \item Learnable weight vector $\mathbf{w}$, initialized to $\mathbf{1.0}$
+    \item $\varepsilon = 10^{-5}$ for numerical stability
+  \end{itemize}
+
+  \medskip
+
+  \begin{exampleblock}{Code Reference}
+    \ttfamily\small
+    denom = x.square().mean\_dim(2).add\_scalar(eps).sqrt();\\
+    output = (x / denom) * weight
+  \end{exampleblock}
+\end{frame}
+
+% ================================================================
+\section{Positional Encoding}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{RoPE --- Concept}
+  \textbf{Rotary Position Embedding} encodes position by
+  \emph{rotating pairs of dimensions} in the embedding space.
+
+  \bigskip
+
+  \begin{itemize}
+    \item No learned positional embeddings needed
+    \item Base frequency $\theta = 10\,000$
+    \item Per-pair frequency:
+      \[
+        \theta_k = \theta^{\,-2k / d_{\text{head}}},
+        \qquad k = 0, 1, \ldots, \tfrac{d_{\text{head}}}{2} - 1
+      \]
+    \item Rotation applied to \textbf{Q} and \textbf{K} \emph{before} attention
+    \item Relative position emerges naturally from dot products:
+      $\mathbf{q}_m^{\!\top} \mathbf{k}_n$
+      depends only on $m - n$
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{RoPE --- Formula}
+  For each pair $(x_{2k},\; x_{2k+1})$ at position $m$:
+
+  \begin{block}{2D Rotation by Angle $m\theta_k$}
+    \[
+      \begin{aligned}
+        \text{RoPE}(\mathbf{x}, m)_{2k}
+          &= x_{2k} \cos(m\theta_k)
+           - x_{2k+1} \sin(m\theta_k) \\[6pt]
+        \text{RoPE}(\mathbf{x}, m)_{2k+1}
+          &= x_{2k} \sin(m\theta_k)
+           + x_{2k+1} \cos(m\theta_k)
+      \end{aligned}
+    \]
+  \end{block}
+
+  \medskip
+  \begin{itemize}
+    \item Low-frequency dims (small $k$) rotate \textbf{slowly}
+    \item High-frequency dims (large $k$) rotate \textbf{quickly}
+    \item Equivalent to complex-element-wise multiplication:
+      $x_k \cdot e^{i m\theta_k}$
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{RoPE --- Worked Example}
+  \small
+  Config: $d_{\text{head}} = 16 \Rightarrow 8$ pairs \qquad Position $m = 3$
+
+  \medskip
+
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \centering
+      \textbf{Frequencies}
+
+      \medskip
+      \begin{tabular}{cccl}
+        \toprule
+        $k$ & $\theta_k$ & $m\theta_k$ & \\
+        \midrule
+        0 & $10000^{0}      = 1.000$  & $3.000$ \\
+        1 & $10000^{-0.125} \approx 0.316$ & $0.949$ \\
+        2 & $10000^{-0.250} \approx 0.100$ & $0.300$ \\
+        3 & $10000^{-0.375} \approx 0.032$ & $0.095$ \\
+        \bottomrule
+      \end{tabular}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \centering
+      \textbf{Rotation of pair $k{=}0$}
+
+      \medskip
+      Input pair: $(x_0, x_1) = (1.0,\; 0.5)$
+
+      \[
+        \begin{aligned}
+          x'_0 &= 1.0 \cos 3.0 - 0.5 \sin 3.0 \\
+               &\approx -1.12 \\
+          x'_1 &= 1.0 \sin 3.0 + 0.5 \cos 3.0 \\
+               &\approx 0.03
+        \end{aligned}
+      \]
+
+      \medskip
+      \small
+      (Values rounded; $\cos 3 \approx -0.990$, $\sin 3 \approx 0.141$)
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Attention}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{GQA --- Concept}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      \textbf{Standard Multi-Head Attention (MHA):}
+      \begin{itemize}
+        \item Each of $n_{\text{heads}}$ heads has separate Q, K, V
+      \end{itemize}
+
+      \medskip
+      \textbf{{\color{attnblue}Grouped-Query Attention (GQA):}}
+      \begin{itemize}
+        \item $n_{\text{kv}} < n_{\text{heads}}$
+        \item K and V heads are \alert{shared} across groups
+        \item KV heads repeated $\lceil n_{\text{heads}} / n_{\text{kv}} \rceil$
+              times to match Q
+      \end{itemize}
+
+      \bigskip
+      \textbf{Benefit:}
+      \begin{itemize}
+        \item Smaller KV cache
+        \item Faster inference
+        \item Fewer parameters
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \centering
+      \begin{tikzpicture}[
+        qbox/.style={draw, fill=attnblue!20, minimum size=0.5cm,
+                     font=\scriptsize},
+        kbox/.style={draw, fill=ffngreen!30, minimum size=0.5cm,
+                     font=\scriptsize},
+        >=Stealth, scale=0.9, transform shape
+      ]
+        % MHA
+        \node[font=\small\bfseries] at (0, 3.3) {MHA};
+        \foreach \i in {0,...,3} {
+          \node[qbox] (q\i) at (\i*0.7, 2.7) {Q};
+          \node[kbox] (k\i) at (\i*0.7, 2.0) {K\,\i};
+          \draw[->, thin] (q\i) -- (k\i);
+        }
+
+        % GQA
+        \node[font=\small\bfseries] at (0, 1.2) {GQA};
+        \foreach \i in {0,...,3} {
+          \node[qbox] (gq\i) at (\i*0.7, 0.6) {Q};
+        }
+        \node[kbox, minimum width=2.4cm] (gk) at (1.05, -0.15) {K\,(shared)};
+        \foreach \i in {0,...,3} {
+          \draw[->, thin] (gq\i) -- (gk);
+        }
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{GQA --- Formula}
+  \begin{block}{Scaled Dot-Product Attention with Causal Mask}
+    \[
+      {\color{attnblue}
+      \operatorname{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
+      \;=\;
+      \operatorname{softmax}\!\Bigl(
+        \frac{\mathbf{Q}\mathbf{K}^{\!\top}}{\sqrt{d_k}}
+        + \mathbf{M}
+      \Bigr)
+      \,\mathbf{V}}
+    \]
+  \end{block}
+
+  \smallskip
+  \begin{itemize}
+    \item $\mathbf{M}$: causal mask ($-\infty$ for future positions)
+    \item $\mathbf{Q}$: $(B,\; n_{\text{heads}},\; L,\; d_k)$
+    \item $\mathbf{K}, \mathbf{V}$: $(B,\; n_{\text{kv}},\; L,\; d_k)$
+          $\;\to\;$ repeated to match $n_{\text{heads}}$
+  \end{itemize}
+
+  \medskip
+  \begin{block}{Weight Matrices}
+    \[
+      \mathbf{W}_Q \in \mathbb{R}^{d \times d},\;\;
+      \mathbf{W}_K \in \mathbb{R}^{d \times n_{\text{kv}} \cdot d_k},\;\;
+      \mathbf{W}_V \in \mathbb{R}^{d \times n_{\text{kv}} \cdot d_k},\;\;
+      \mathbf{W}_O \in \mathbb{R}^{d \times d}
+    \]
+  \end{block}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{GQA --- Worked Example (Action Preset)}
+  Config: $d{=}64$,\; $n_{\text{heads}}{=}4$,\;
+  $n_{\text{kv}}{=}1$,\; $d_k{=}16$
+
+  \bigskip
+  \centering
+  \begin{tabular}{llrl}
+    \toprule
+    \textbf{Matrix} & \textbf{Shape} & \textbf{Params} & \\
+    \midrule
+    $\mathbf{W}_Q$ & $64 \times 64$          & 4\,096 & \\
+    $\mathbf{W}_K$ & $64 \times 16$          & 1\,024 & {\small only 1 KV head!} \\
+    $\mathbf{W}_V$ & $64 \times 16$          & 1\,024 & \\
+    $\mathbf{W}_O$ & $64 \times 64$          & 4\,096 & \\
+    \midrule
+    \textbf{Total per layer} & & \textbf{10\,240} & \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  \alert{KV saving:}
+  MHA would need $64{\times}64 + 64{\times}64 = 8\,192$ for K$+$V.\\
+  GQA needs only $64{\times}16 + 64{\times}16 = 2\,048$
+  --- \alert{75\,\% less!}
+\end{frame}
+
+% ================================================================
+\section{Feed-Forward Network}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{SwiGLU Feed-Forward Network}
+  \begin{block}{Formula}
+    \[
+      {\color{ffngreen}
+      \operatorname{FFN}(\mathbf{x})
+      \;=\;
+      \Bigl(
+        \operatorname{SiLU}(\mathbf{x}\,\mathbf{W}_{\text{gate}})
+        \;\odot\;
+        \mathbf{x}\,\mathbf{W}_{\text{up}}
+      \Bigr)
+      \;\mathbf{W}_{\text{down}}}
+    \]
+  \end{block}
+
+  \smallskip
+  where \; $\operatorname{SiLU}(z) = z \cdot \sigma(z)$, \;
+  $\sigma(z) = \frac{1}{1 + e^{-z}}$ \; (sigmoid).
+
+  \bigskip
+
+  \textbf{Three} weight matrices (not two like standard ReLU FFN):
+
+  \medskip
+  \centering
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Matrix} & \textbf{Shape} & \textbf{Role} \\
+    \midrule
+    $\mathbf{W}_{\text{gate}}$ & $(d \times d_{\text{ff}})$ & Gating \\
+    $\mathbf{W}_{\text{up}}$   & $(d \times d_{\text{ff}})$ & Value \\
+    $\mathbf{W}_{\text{down}}$ & $(d_{\text{ff}} \times d)$ & Projection back \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{SwiGLU --- Worked Example}
+  Config: $d = 64$, \; $d_{\text{ff}} = 128$
+
+  \bigskip
+  \centering
+  \begin{tabular}{llrl}
+    \toprule
+    \textbf{Matrix} & \textbf{Shape} & \textbf{Params} & \\
+    \midrule
+    $\mathbf{W}_{\text{gate}}$ & $64 \times 128$ & 8\,192 & \\
+    $\mathbf{W}_{\text{up}}$   & $64 \times 128$ & 8\,192 & \\
+    $\mathbf{W}_{\text{down}}$ & $128 \times 64$ & 8\,192 & \\
+    \midrule
+    \textbf{Total per layer}   &                 & \textbf{24\,576} & \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  Note: $3 \times d \times d_{\text{ff}} = 3 \times 64 \times 128 = 24\,576$
+\end{frame}
+
+% ================================================================
+\section{Masking \& Training}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{Causal Masking}
+  Decoder-only: each token can only attend to
+  \textbf{itself and previous tokens}.
+
+  \bigskip
+  \centering
+  \begin{tikzpicture}[scale=0.85, transform shape]
+    \def\N{5}
+    % Grid
+    \foreach \i in {1,...,\N} {
+      \foreach \j in {1,...,\N} {
+        \pgfmathtruncatemacro{\allowed}{\j <= \i ? 1 : 0}
+        \ifnum\allowed=1
+          \fill[attnblue!15] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
+        \else
+          \fill[red!10] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
+        \fi
+        \draw[gray!50] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
+      }
+    }
+    % Labels
+    \foreach \i in {1,...,\N} {
+      \node[font=\small] at (\i-0.5, \N+0.3) {$t_{\i}$};
+      \node[font=\small] at (-0.3, \N-\i+0.5) {$t_{\i}$};
+    }
+    \node[font=\small] at (2.5, -0.5) {Keys $\rightarrow$};
+    \node[font=\small, rotate=90] at (-0.9, 2.5) {Queries $\rightarrow$};
+
+    % Annotation
+    \node[attnblue!70!black, font=\small, align=left] at (7.5, 3.5)
+      {{\color{attnblue}\textbf{Blue}} = allowed\\($0$ in mask)};
+    \node[red!60!black, font=\small, align=left] at (7.5, 2.2)
+      {{\color{red!60!black}\textbf{Red}} = blocked\\($-\infty$ in mask)};
+    \node[font=\small, align=left] at (7.5, 0.8)
+      {After softmax:\\
+       blocked positions $\to 0$ prob.};
+  \end{tikzpicture}
+\end{frame}
+
+% ================================================================
+\section{Parameter Analysis}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{Full Parameter Count --- 71K Preset}
+  \small
+  Config: $V{=}23$, $N{=}2$, $d{=}64$, $n_h{=}4$, $n_{\text{kv}}{=}1$,
+  $d_k{=}16$, $d_{\text{ff}}{=}128$
+
+  \medskip
+  \centering
+  \begin{tabular}{llrr}
+    \toprule
+    \textbf{Component} & \textbf{Formula} & \textbf{Computation} & \textbf{Params} \\
+    \midrule
+    Embedding
+      & $V \times d$
+      & $23 \times 64$
+      & 1\,472 \\[4pt]
+    \multicolumn{4}{l}{\textit{Per layer} ($\times 2$):} \\
+    \quad Attention
+      & $d^2 + 2 \cdot d \cdot n_{\text{kv}} \cdot d_k + d^2$
+      & $4096 + 2048 + 4096$
+      & 10\,240 \\
+    \quad FFN
+      & $3 \cdot d \cdot d_{\text{ff}}$
+      & $3 \times 64 \times 128$
+      & 24\,576 \\
+    \quad Norms
+      & $2 \times d$
+      & $2 \times 64$
+      & 128 \\
+    \quad \textit{Subtotal}
+      & & & \textit{34\,944} \\[4pt]
+    Final norm
+      & $d$
+      & $64$
+      & 64 \\
+    \midrule
+    \textbf{Total}
+      & $1472 + 2 \times 34944 + 64$
+      & & \alert{\textbf{71\,424}} \\
+    \bottomrule
+  \end{tabular}
+
+  \smallskip
+  {\footnotesize Output projection is weight-tied with embedding
+  $\Rightarrow$ zero extra parameters.}
+\end{frame}
+
+% ---------------------------------------------------------------
+\begin{frame}{Parameter Presets}
+  \centering
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    \textbf{Preset}
+      & $N$ & $d$ & $n_h$ & $n_{\text{kv}}$ & $d_{\text{ff}}$
+      & \textbf{Params} \\
+    \midrule
+    \alert{action} &  2 &  64 &  4 & 1 &   128 & $\sim$71\,K  \\
+    1M             &  2 &  96 &  4 & 1 &   256 & $\sim$1\,M   \\
+    5M             &  8 & 192 &  6 & 2 &   512 & $\sim$5\,M   \\
+    10M            & 10 & 256 &  8 & 2 &   704 & $\sim$10\,M  \\
+    50M            & 16 & 512 &  8 & 2 & 1\,408 & $\sim$50\,M  \\
+    100M           & 15 & 768 & 12 & 4 & 2\,048 & $\sim$100\,M \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  All presets use the same vocabulary ($V{=}23$) and architecture.\\
+  Only width and depth change.
+\end{frame}
+
+% ================================================================
+\section{Design Philosophy}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{Why So Small?}
+  \begin{enumerate}
+    \item \textbf{Tiny vocabulary} --- action IDs ($V{=}23$)
+          vs.\ text ($V \sim 50\,000$)
+    \item \textbf{Weight-tied} output projection
+          --- no extra $d \times V$ matrix
+    \item \textbf{GQA} with $n_{\text{kv}}{=}1$
+          --- KV projections reduced by \alert{75\,\%}
+    \item \textbf{SwiGLU} gives better capacity per parameter
+          than plain ReLU FFN
+    \item \textbf{Designed for the browser}
+          --- 286\,KB checkpoint fits in memory
+  \end{enumerate}
+
+  \bigskip
+  \centering
+  \begin{tikzpicture}
+    \node[draw, rounded corners=6pt, fill=lightbg,
+          inner sep=10pt, font=\large]
+      {71\,K params $\;\longleftrightarrow\;$
+       286\,KB checkpoint $\;\longleftrightarrow\;$
+       runs in browser};
+  \end{tikzpicture}
+\end{frame}
+
+% ================================================================
+\section{References}
+% ================================================================
+
+% ---------------------------------------------------------------
+\begin{frame}{Thank You / References}
+  \begin{itemize}
+    \setlength{\itemsep}{10pt}
+    \item \textbf{Full documentation:}
+          see \texttt{README.md} in the repository
+    \item \textbf{Burn framework:}
+          \url{https://github.com/tracel-ai/burn}
+    \item \textbf{LLaMA paper:}\\
+          Touvron et al., ``LLaMA: Open and Efficient Foundation
+          Language Models,'' 2023
+    \item \textbf{RoPE (RoFormer):}\\
+          Su et al., ``RoFormer: Enhanced Transformer with Rotary
+          Position Embedding,'' 2021
+    \item \textbf{GQA:}\\
+          Ainslie et al., ``GQA: Training Generalized Multi-Query
+          Transformer Models from Multi-Head Checkpoints,'' 2023
+    \item \textbf{SwiGLU:}\\
+          Shazeer, ``GLU Variants Improve Transformer,'' 2020
+  \end{itemize}
+\end{frame}
+
+\end{document}
