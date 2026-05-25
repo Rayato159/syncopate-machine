@@ -1,61 +1,85 @@
-# syncopate-machine
+# syncopate-machine 🧠⚡
 
-Tiny Burn transformer for action prediction. It does not tokenize text and it
-does not generate words. The website classifies text into an action/lang pair,
-then this model predicts the next action IDs.
-
-## Flow
+Tiny Burn transformer that predicts **action IDs** — no tokenizer, no text gen, just vibes.
 
 ```text
-user text
--> website classifier: Action + Lang
--> [action_id, lang_id, SEP]
--> syncopate-machine predicts action IDs
--> website response graph writes the message
--> mood GIF follows the first action
+user text → classifier (action + lang) → [action_id, lang_id, SEP] → 🔮 model predicts next actions → response graph writes the msg → mood GIF ✨
 ```
 
-## Action Vocab
+## 🏗️ Model Architecture
 
-```text
-0 PAD    1 SOS    2 EOS    3 SEP
-4 Unknown
-5 Greeting       6 Farewell       7 Frustrated
-8 Sad            9 Happy          10 Question
-11 Insult        12 Compliment    13 Agree
-14 Disagree      15 General
-16 Eating        17 DailyLife     18 RustGo
-19 Identity      20 ShitTalk
-21 TH            22 EN
-```
+> 📊 Full architecture slides: [`slides.tex`](slides.tex) (Beamer, compile with `pdflatex`)
 
-## Train
+| Setting            | Value                                |
+| ------------------ | ------------------------------------ |
+| Type               | Causal Transformer (GQA, kv_heads=1) |
+| Layers             | 1                                    |
+| d_model            | 64                                   |
+| Attention heads    | 4                                    |
+| FFN (intermediate) | 64                                   |
+| Vocab              | 23 IDs                               |
+| Seq len            | 64                                   |
+| **Total params**   | **~24K** 🤏                          |
 
-```powershell
+> We tried Bahdanau (additive) attention — turns out transformers with GQA are just built different for tiny action-ID tasks. Fewer params, parallel training, no contest 🤷‍♂️
+
+## 🚀 Quick Start
+
+### 1. Prepare data
+
+```bash
 python examples\build_action_data.py --offline
-cargo run --release --features cuda --example train_action_model -- --steps 3000 --batch-size 32 --lr 0.003 --checkpoint-dir runs/action-model-personal-v2
 ```
 
-Training is CUDA-only. Browser runtime can use WebGPU or CPU.
+### 2. Train (CUDA only)
 
-## Browser Runtime
-
-Use the `wasm` feature and load:
-
-```text
-assets/model-personal-v2.mpk
-assets/model-config-personal-v2.json
+```bash
+cargo run --release --features cuda --example train_action_model -- --steps 3000 --batch-size 32 --lr 0.003 --checkpoint-dir runs/action-model-v2
 ```
 
-The active personal model is `23` vocab IDs, `seq_len=64`, `2` layers,
-`d_model=64`, about `71K` params.
+Outputs in `runs/action-model-v2/`:
 
-## What Is Gone
+- `final.mpk` — model weights
+- `model-config.json` — config for browser loading
+- `loss.csv` — training loss per step
+- `report.json` — full training report
 
-- tokenizer examples
-- text chat examples
-- high-level `ChatModel` / `Trainer` wrappers
-- legacy Multiscreen transition/layout engine
-- SentencePiece and old NPC prompt-contract docs
+### 3. Inference (native Rust)
 
-MIT. Break it, fix it, ship it.
+```rust,no_run
+use syncopate_machine::prelude::*;
+
+let device = auto_device()?;
+let config = SyncopateModelConfig::preset_action(23, 64);
+let mut model = DefaultSyncopateModel::new(config, &device)?;
+model.load_parameters("runs/action-model-v2/final.mpk")?;
+
+// Forward pass: context_ids -> logits for the last position
+let logits = model.forward_logits(&[1, 5, 3, 9], 0, &device)?;  // [1, seq_len, 23]
+```
+
+### 4. Inference (browser / WASM)
+
+Load these assets into your WASM build:
+
+- `model-personal-v2.mpk`
+- `model-config-personal-v2.json`
+
+```rust,ignore
+let mut runtime = BrowserRuntime::new();
+runtime.load_from_url_with_config_json(
+    "assets/model-personal-v2.mpk",
+    Some("assets/model-config-personal-v2.json"),
+    23, 64,
+    BrowserBackendPreference::Auto,
+).await?;
+
+// Single step: returns Vec<f32> of length vocab_size
+let logits = runtime.step(&[1, 5, 3, 9]).await?;
+```
+
+Works on WebGPU or CPU — auto-fallback if GPU is broken.
+
+## 🪪 LICENSE
+
+MIT. Break it, fix it, ship it 🚀

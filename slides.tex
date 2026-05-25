@@ -155,12 +155,12 @@
           \toprule
           Vocab & 23 \\
           Context & 64 \\
-          Layers & 2 \\
+          Layers & 1 \\
           Width & 64 \\
           Attention heads & 4 \\
           KV heads & 1 \\
-          FFN width & 128 \\
-          Params & 71,424 \\
+          FFN width & 64 \\
+          Params & 24,192 \\
           \bottomrule
         \end{tabular}
       \end{block}
@@ -187,8 +187,8 @@
 
 \begin{frame}{Parameter Count}
   \small
-  Config: $V=23$, $N=2$, $d=64$, $n_h=4$, $n_{kv}=1$, $d_k=16$,
-  $d_{ff}=128$
+  Config: $V=23$, $N=1$, $d=64$, $n_h=4$, $n_{kv}=1$, $d_k=16$,
+  $d_{ff}=64$
 
   \medskip
   \centering
@@ -198,11 +198,11 @@
     \midrule
     Embedding & $V \times d = 23 \times 64$ & 1,472 \\
     Attention per layer & $d^2 + 2dn_{kv}d_k + d^2$ & 10,240 \\
-    FFN per layer & $3dd_{ff}$ & 24,576 \\
+    FFN per layer (SwiGLU) & $3dd_{ff}$ & 12,288 \\
     Norms per layer & $2d$ & 128 \\
     Final norm & $d$ & 64 \\
     \midrule
-    Total & $1472 + 2(10240 + 24576 + 128) + 64$ & \alert{71,424} \\
+    Total & $1472 + 1(10240 + 12288 + 128) + 64$ & \alert{24,192} \\
     \bottomrule
   \end{tabular}
 
@@ -210,7 +210,64 @@
   Output projection reuses the embedding matrix, so it adds zero new params.
 \end{frame}
 
-\section{Runtime}
+\section{Architecture Decision}
+
+\begin{frame}{Why Not Bahdanau Attention?}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Bahdanau + GRU}
+        \begin{itemize}
+          \item Single-head additive attention
+          \item Sequential decoding (step by step)
+          \item GRU gates: $3 \times$ (input + hidden + bias)
+          \item 1 GRU layer $\approx$ 2 transformer layers
+          \item 1-layer $\approx$ 72K, 2-layer bi $\approx$ 291K params
+          \item Training 2–3$\times$ slower
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Transformer + GQA (chosen)}
+        \begin{itemize}
+          \item Multi-head attention
+          \item Parallel over all positions
+          \item GQA \texttt{kv\_heads=1} is a cheat code
+          \item K,V projections: $64 \times 16 = 1{,}024$ each
+          \item \alert{24K params} for the full model
+          \item Training $\sim$33 steps/s
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+
+  \bigskip
+  \centering
+  Bahdanau shines for large seq2seq (translation). \alert{For tiny action-ID tasks, the transformer wins.}
+\end{frame}
+
+\begin{frame}{71K $\to$ 24K ($-66\%$)}
+  \centering
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Setting} & \textbf{Before} & \textbf{After} \\
+    \midrule
+    Layers & 2 & 1 \\
+    FFN intermediate & 128 & 64 \\
+    Total params & 71,192 & 24,192 \\
+    Val accuracy & --- & 63.5\% \\
+    Perplexity & --- & 3.05 \\
+    Training speed & --- & $\sim$33 steps/s \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  \begin{block}{What changed}
+    Halved decoder layers from 2~$\to$~1 and FFN width from 128~$\to$~64.
+    Removed dead code: \texttt{SyncopateParameterBudget} enum,
+    \texttt{AttentionKernel::HigherOrder}, legacy preset methods.
+    4 tests remain, all passing.
+  \end{block}
+\end{frame}
 
 \begin{frame}{Browser Runtime}
   \begin{itemize}
@@ -302,6 +359,7 @@
 \begin{frame}{References}
   \begin{itemize}
     \item Burn framework: \texttt{https://github.com/tracel-ai/burn}
+    \item Bahdanau et al.\ (2014): Neural Machine Translation by Jointly Learning to Align and Translate
     \item RoPE / RoFormer: rotary position embeddings
     \item GQA: grouped-query attention
     \item SwiGLU: gated feed-forward block

@@ -18,61 +18,12 @@ use std::{f32::consts::PI, f64::consts::PI as PI64, path::Path};
 const EPS: f32 = 1e-6;
 const NEG_INF: f32 = -1.0e9;
 
-/// Supported Syncopate parameter budgets.
-///
-/// The final count is approximate because ID embeddings scale with the
-/// caller's vocabulary size. Use [`SyncopateModelConfig::estimated_parameter_count`]
-/// to inspect the count for a resolved config.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SyncopateParameterBudget {
-    Params1M,
-    Params5M,
-    Params10M,
-    Params50M,
-    Params100M,
-}
-
-impl SyncopateParameterBudget {
-    pub const ALL: [Self; 5] = [
-        Self::Params1M,
-        Self::Params5M,
-        Self::Params10M,
-        Self::Params50M,
-        Self::Params100M,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Params1M => "1M",
-            Self::Params5M => "5M",
-            Self::Params10M => "10M",
-            Self::Params50M => "50M",
-            Self::Params100M => "100M",
-        }
-    }
-
-    pub fn target_parameter_count(self) -> usize {
-        match self {
-            Self::Params1M => 1_000_000,
-            Self::Params5M => 5_000_000,
-            Self::Params10M => 10_000_000,
-            Self::Params50M => 50_000_000,
-            Self::Params100M => 100_000_000,
-        }
-    }
-}
-
 /// Attention kernel used inside each decoder block.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AttentionKernel {
-    /// GPT-1/Llama style causal softmax attention. This is the training-safe
-    /// default for tiny NPC chat models.
     #[default]
     Softmax,
-    /// Normalized second-order causal attention inspired by Higher-order Linear
-    /// Attention. Implemented in the exact parallel form for small contexts.
-    HigherOrder,
 }
 
 /// Decoder-only model configuration for syncopate-machine.
@@ -102,21 +53,6 @@ pub struct SyncopateModelConfig {
 }
 
 impl SyncopateModelConfig {
-    pub fn tiny() -> Self {
-        Self {
-            vocab_size: 64,
-            seq_len: 64,
-            layers: 2,
-            d_model: 96,
-            attention_heads: 4,
-            kv_heads: 1,
-            intermediate_size: 256,
-            attention_kernel: AttentionKernel::Softmax,
-            rope_theta: 10_000.0,
-            rms_norm_eps: 1e-5,
-        }
-    }
-
     pub fn tiny_for_tests() -> Self {
         Self {
             vocab_size: 32,
@@ -132,42 +68,8 @@ impl SyncopateModelConfig {
         }
     }
 
-    pub fn for_parameter_budget(
-        budget: SyncopateParameterBudget,
-        vocab_size: usize,
-        seq_len: usize,
-    ) -> Self {
-        match budget {
-            SyncopateParameterBudget::Params1M => Self::preset_1m(vocab_size, seq_len),
-            SyncopateParameterBudget::Params5M => Self::preset_5m(vocab_size, seq_len),
-            SyncopateParameterBudget::Params10M => Self::preset_10m(vocab_size, seq_len),
-            SyncopateParameterBudget::Params50M => Self::preset_50m(vocab_size, seq_len),
-            SyncopateParameterBudget::Params100M => Self::preset_100m(vocab_size, seq_len),
-        }
-    }
-
-    pub fn preset_1m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 2, 96, 4, 1, 256)
-    }
-
     pub fn preset_action(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 2, 64, 4, 1, 128)
-    }
-
-    pub fn preset_5m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 8, 192, 6, 2, 512)
-    }
-
-    pub fn preset_10m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 10, 256, 8, 2, 704)
-    }
-
-    pub fn preset_50m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 16, 512, 8, 2, 1408)
-    }
-
-    pub fn preset_100m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 15, 768, 12, 4, 2048)
+        Self::from_dimensions(vocab_size, seq_len, 1, 64, 4, 1, 64)
     }
 
     pub fn with_attention_kernel(mut self, kernel: AttentionKernel) -> Self {
@@ -727,10 +629,7 @@ impl<B: Backend> CausalAttention<B> {
         let scores = q
             .matmul(k.swap_dims(2, 3))
             .mul_scalar(1.0 / (self.head_dim as f32).sqrt());
-        let mixed = match self.kernel {
-            AttentionKernel::Softmax => softmax_attention(scores, v),
-            AttentionKernel::HigherOrder => higher_order_attention(scores, v),
-        };
+        let mixed = softmax_attention(scores, v);
 
         let merged = mixed.swap_dims(1, 2).reshape([batch, seq_len, d_model]);
         linear3(merged, self.w_o.val())
@@ -767,17 +666,6 @@ fn softmax_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tenso
         .expand([batch, heads, seq_len, seq_len]);
     let weights = activation::softmax(scores.mask_fill(mask, NEG_INF), 3);
     weights.matmul(v)
-}
-
-fn higher_order_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tensor<B, 4> {
-    let [batch, heads, seq_len, _] = scores.dims();
-    let keep = causal_keep_tensor::<B>(seq_len, &scores.device())
-        .unsqueeze::<4>()
-        .expand([batch, heads, seq_len, seq_len]);
-    let w = scores * keep.clone();
-    let second = w.clone().matmul(w.swap_dims(2, 3)) * keep;
-    let norm = second.clone().abs().sum_dim(3).add_scalar(EPS);
-    second.matmul(v) / norm
 }
 
 fn apply_rope<B: Backend>(x: Tensor<B, 4>, theta: f32) -> Tensor<B, 4> {
@@ -870,18 +758,6 @@ fn causal_invalid_mask_tensor<B: Backend>(
     }
     Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
         .greater_elem(0.0)
-}
-
-fn causal_keep_tensor<B: Backend>(seq_len: usize, device: &B::Device) -> Tensor<B, 2> {
-    let mut distances = Vec::with_capacity(seq_len * seq_len);
-    for i in 0..seq_len {
-        for j in 0..seq_len {
-            distances.push(j as f32 - i as f32);
-        }
-    }
-    Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
-        .lower_equal_elem(0.0)
-        .float()
 }
 
 fn linear3<B: Backend>(x: Tensor<B, 3>, weight: Tensor<B, 2>) -> Tensor<B, 3> {

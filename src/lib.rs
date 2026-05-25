@@ -25,8 +25,7 @@ pub use device::{auto_device, cuda};
 pub use error::{Error, Result};
 pub use model::{
     AttentionKernel, DefaultSyncopateModel, EvaluationResult, ModelTrainingConfig,
-    ModelTrainingReport, SyncopateModel, SyncopateModelConfig, SyncopateParameterBudget,
-    cross_entropy_loss_with_mask,
+    ModelTrainingReport, SyncopateModel, SyncopateModelConfig, cross_entropy_loss_with_mask,
 };
 pub use runtime::{DefaultAutodiffBackend, DefaultBackend, Device, device_label};
 

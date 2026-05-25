@@ -6,7 +6,7 @@ pub use crate::cpu;
 pub use crate::{
     AttentionKernel, DefaultAutodiffBackend, DefaultBackend, DefaultSyncopateModel, Device, Error,
     EvaluationResult, ModelTrainingConfig, ModelTrainingReport, Result, SyncopateModel,
-    SyncopateModelConfig, SyncopateParameterBudget, cross_entropy_loss_with_mask, device_label,
+    SyncopateModelConfig, cross_entropy_loss_with_mask, device_label,
 };
 
 #[cfg(not(feature = "cuda"))]

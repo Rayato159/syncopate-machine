@@ -1,36 +1,6 @@
 use syncopate_machine::prelude::*;
 
 #[test]
-fn parameter_budget_presets_validate_and_scale_up() -> Result<()> {
-    let vocab_size = 8192;
-    let seq_len = 96;
-    let mut previous_count = 0;
-
-    for budget in SyncopateParameterBudget::ALL {
-        let config = SyncopateModelConfig::for_parameter_budget(budget, vocab_size, seq_len);
-        config.validate()?;
-
-        let count = config.estimated_parameter_count();
-        let target = budget.target_parameter_count();
-        assert!(
-            count >= target * 3 / 4 && count <= target * 5 / 4,
-            "{} preset estimated {} params, target {}",
-            budget.label(),
-            count,
-            target
-        );
-        assert!(
-            count > previous_count,
-            "{} preset did not increase parameter count",
-            budget.label()
-        );
-        previous_count = count;
-    }
-
-    Ok(())
-}
-
-#[test]
 fn estimated_parameter_count_matches_burn_module_count() -> Result<()> {
     let device = Device::default();
     let config = SyncopateModelConfig::tiny_for_tests();
@@ -38,17 +8,6 @@ fn estimated_parameter_count_matches_burn_module_count() -> Result<()> {
 
     assert_eq!(config.estimated_parameter_count(), model.parameter_count());
     Ok(())
-}
-
-#[test]
-fn preset_10m_uses_expected_dimensions() {
-    let config = SyncopateModelConfig::preset_10m(8192, 96);
-
-    assert_eq!(config.layers, 10);
-    assert_eq!(config.d_model, 256);
-    assert_eq!(config.attention_heads, 8);
-    assert_eq!(config.kv_heads, 2);
-    assert_eq!(config.intermediate_size, 704);
 }
 
 #[test]
@@ -97,22 +56,6 @@ fn syncopate_model_can_train_action_sequences() -> Result<()> {
         logits.dims(),
         [1, model.config().seq_len, model.config().vocab_size]
     );
-    Ok(())
-}
-
-#[test]
-fn syncopate_model_supports_higher_order_attention() -> Result<()> {
-    let device = Device::default();
-    let config =
-        SyncopateModelConfig::tiny_for_tests().with_attention_kernel(AttentionKernel::HigherOrder);
-    let model = DefaultSyncopateModel::new(config.clone(), &device)?;
-    let action_ids = Tensor::<DefaultAutodiffBackend, 2, Int>::from_data(
-        TensorData::new(vec![1i32, 2, 3, 4, 2, 3, 4, 5], [1, config.seq_len]),
-        &device,
-    );
-
-    let logits = model.forward(action_ids);
-    assert_eq!(logits.dims(), [1, config.seq_len, config.vocab_size]);
     Ok(())
 }
 
