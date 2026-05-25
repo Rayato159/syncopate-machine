@@ -169,7 +169,7 @@
       \begin{block}{Decoder Block}
         \begin{itemize}
           \item RMSNorm
-          \item Causal attention
+          \item Causal attention (\alert{HigherOrder} polynomial kernel)
           \item RoPE position rotation
           \item Grouped-query attention
           \item SwiGLU feed-forward
@@ -210,6 +210,39 @@
   Output projection reuses the embedding matrix, so it adds zero new params.
 \end{frame}
 
+\begin{frame}{Attention Kernels}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Softmax (default)}
+        \[
+          w = \texttt{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} \cdot M\right)
+        \]
+        \begin{itemize}
+          \item Standard scaled dot-product
+          \item $\exp$ / $\sum$ normalization
+          \item Well-studied, universally used
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{\alert{HigherOrder} (active)}
+        \[
+          W = S \cdot K,\quad w = \frac{W W^\top \cdot K}{\sum|W W^\top|}
+        \]
+        \begin{itemize}
+          \item Second-order polynomial kernel
+          \item No $\exp$ — cheaper on weak GPUs
+          \item \alert{Zero extra parameters}
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+
+  \bigskip
+  \centering
+  $S$ = raw scores, $K$ = causal keep mask. Switch with \texttt{-{}-kernel} at train time.
+\end{frame}
+
 \section{Architecture Decision}
 
 \begin{frame}{Why Not Bahdanau Attention?}
@@ -234,7 +267,7 @@
           \item GQA \texttt{kv\_heads=1} is a cheat code
           \item K,V projections: $64 \times 16 = 1{,}024$ each
           \item \alert{24K params} for the full model
-          \item Training $\sim$33 steps/s
+          \item Training $\sim$41 steps/s
         \end{itemize}
       \end{block}
     \end{column}
@@ -254,9 +287,9 @@
     Layers & 2 & 1 \\
     FFN intermediate & 128 & 64 \\
     Total params & 71,192 & 24,192 \\
-    Val accuracy & --- & 63.5\% \\
-    Perplexity & --- & 3.05 \\
-    Training speed & --- & $\sim$33 steps/s \\
+    Val accuracy & --- & 63.2\% \\
+    Perplexity & --- & 3.03 \\
+    Training speed & --- & $\sim$41 steps/s \\
     \bottomrule
   \end{tabular}
 
@@ -264,7 +297,9 @@
   \begin{block}{What changed}
     Halved decoder layers from 2~$\to$~1 and FFN width from 128~$\to$~64.
     Removed dead code: \texttt{SyncopateParameterBudget} enum,
-    \texttt{AttentionKernel::HigherOrder}, legacy preset methods.
+    legacy preset methods.
+    Active attention kernel: \alert{HigherOrder} (polynomial normalization,
+    zero extra params vs Softmax).
     4 tests remain, all passing.
   \end{block}
 \end{frame}
@@ -296,7 +331,8 @@
     \small
     \texttt{cargo run --release --features cuda --example train\_action\_model --}\\
     \texttt{\quad --steps 3000 --batch-size 32 --lr 0.003}\\
-    \texttt{\quad --checkpoint-dir runs/action-model-personal-v2}
+    \texttt{\quad --kernel higher-order}\\
+    \texttt{\quad --checkpoint-dir runs/action-higher-order}
   \end{block}
 
   \begin{itemize}

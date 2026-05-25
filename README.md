@@ -13,6 +13,7 @@ user text → classifier (action + lang) → [action_id, lang_id, SEP] → 🔮 
 | Setting            | Value                                |
 | ------------------ | ------------------------------------ |
 | Type               | Causal Transformer (GQA, kv_heads=1) |
+| Attention kernel   | **HigherOrder** (polynomial) 🔥       |
 | Layers             | 1                                    |
 | d_model            | 64                                   |
 | Attention heads    | 4                                    |
@@ -34,7 +35,8 @@ python examples\build_action_data.py --offline
 ### 2. Train (CUDA only)
 
 ```bash
-cargo run --release --features cuda --example train_action_model -- --steps 3000 --batch-size 32 --lr 0.003 --checkpoint-dir runs/action-model-v2
+cargo run --release --features cuda --example train_action_model -- \
+  --steps 3000 --batch-size 32 --lr 0.003 --kernel higher-order --checkpoint-dir runs/action-model-v2
 ```
 
 Outputs in `runs/action-model-v2/`:
@@ -50,7 +52,8 @@ Outputs in `runs/action-model-v2/`:
 use syncopate_machine::prelude::*;
 
 let device = auto_device()?;
-let config = SyncopateModelConfig::preset_action(23, 64);
+let config = SyncopateModelConfig::preset_action(23, 64)
+    .with_attention_kernel(AttentionKernel::HigherOrder);
 let mut model = DefaultSyncopateModel::new(config, &device)?;
 model.load_parameters("runs/action-model-v2/final.mpk")?;
 
@@ -79,6 +82,15 @@ let logits = runtime.step(&[1, 5, 3, 9]).await?;
 ```
 
 Works on WebGPU or CPU — auto-fallback if GPU is broken.
+
+### Attention Kernels
+
+| Kernel | Normalization | Notes |
+|---|---|---|
+| `softmax` (default) | `softmax(QKᵀ / √d)` | standard, well-tested |
+| `higher-order` | `(W·Wᵀ · keep) / Σ|W·Wᵀ|` | polynomial, zero extra params |
+
+Pass `--kernel higher-order` at train time to use it. The kernel is saved in `model-config.json` and loaded automatically by the browser runtime.
 
 ## 🪪 LICENSE
 

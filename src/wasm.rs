@@ -511,6 +511,8 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
 
     // Parse only the attention_kernel field first; dimensions come from the
     // full config below so tiny action models load with the exact train shape.
+    // Parse only the attention_kernel field first; dimensions come from the
+    // full config below so tiny action models load with the exact train shape.
     let kernel = if text.contains("\"higher-order\"") {
         AttentionKernel::HigherOrder
     } else {
@@ -523,11 +525,11 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
 
     let vocab = json["vocab_size"].as_u64().unwrap_or(23) as usize;
     let seq = json["seq_len"].as_u64().unwrap_or(64) as usize;
-    let layers = json["layers"].as_u64().unwrap_or(2) as usize;
+    let layers = json["layers"].as_u64().unwrap_or(1) as usize;
     let d_model = json["d_model"].as_u64().unwrap_or(64) as usize;
     let attention_heads = json["attention_heads"].as_u64().unwrap_or(4) as usize;
     let kv_heads = json["kv_heads"].as_u64().unwrap_or(1) as usize;
-    let intermediate_size = json["intermediate_size"].as_u64().unwrap_or(128) as usize;
+    let intermediate_size = json["intermediate_size"].as_u64().unwrap_or(64) as usize;
 
     Ok(SyncopateModelConfig::from_dimensions(
         vocab,
@@ -542,11 +544,7 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
 }
 
 fn default_browser_config(vocab_size: usize, seq_len: usize) -> SyncopateModelConfig {
-    if vocab_size <= 64 {
-        SyncopateModelConfig::preset_action(vocab_size, seq_len)
-    } else {
-        SyncopateModelConfig::preset_1m(vocab_size, seq_len)
-    }
+    SyncopateModelConfig::preset_action(vocab_size, seq_len)
 }
 
 async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {

@@ -24,6 +24,7 @@ const NEG_INF: f32 = -1.0e9;
 pub enum AttentionKernel {
     #[default]
     Softmax,
+    HigherOrder,
 }
 
 /// Decoder-only model configuration for syncopate-machine.
@@ -629,7 +630,10 @@ impl<B: Backend> CausalAttention<B> {
         let scores = q
             .matmul(k.swap_dims(2, 3))
             .mul_scalar(1.0 / (self.head_dim as f32).sqrt());
-        let mixed = softmax_attention(scores, v);
+        let mixed = match self.kernel {
+            AttentionKernel::Softmax => softmax_attention(scores, v),
+            AttentionKernel::HigherOrder => higher_order_attention(scores, v),
+        };
 
         let merged = mixed.swap_dims(1, 2).reshape([batch, seq_len, d_model]);
         linear3(merged, self.w_o.val())
@@ -666,6 +670,17 @@ fn softmax_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tenso
         .expand([batch, heads, seq_len, seq_len]);
     let weights = activation::softmax(scores.mask_fill(mask, NEG_INF), 3);
     weights.matmul(v)
+}
+
+fn higher_order_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tensor<B, 4> {
+    let [batch, heads, seq_len, _] = scores.dims();
+    let keep = causal_keep_tensor::<B>(seq_len, &scores.device())
+        .unsqueeze::<4>()
+        .expand([batch, heads, seq_len, seq_len]);
+    let w = scores * keep.clone();
+    let second = w.clone().matmul(w.swap_dims(2, 3)) * keep;
+    let norm = second.clone().abs().sum_dim(3).add_scalar(EPS);
+    second.matmul(v) / norm
 }
 
 fn apply_rope<B: Backend>(x: Tensor<B, 4>, theta: f32) -> Tensor<B, 4> {
@@ -758,6 +773,18 @@ fn causal_invalid_mask_tensor<B: Backend>(
     }
     Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
         .greater_elem(0.0)
+}
+
+fn causal_keep_tensor<B: Backend>(seq_len: usize, device: &B::Device) -> Tensor<B, 2> {
+    let mut distances = Vec::with_capacity(seq_len * seq_len);
+    for i in 0..seq_len {
+        for j in 0..seq_len {
+            distances.push(j as f32 - i as f32);
+        }
+    }
+    Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
+        .lower_equal_elem(0.0)
+        .float()
 }
 
 fn linear3<B: Backend>(x: Tensor<B, 3>, weight: Tensor<B, 2>) -> Tensor<B, 3> {

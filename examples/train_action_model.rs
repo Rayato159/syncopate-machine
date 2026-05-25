@@ -46,6 +46,10 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     seq_len: usize,
 
+    /// Attention kernel: softmax or higher-order.
+    #[arg(long, default_value = "softmax")]
+    kernel: String,
+
     /// Directory for checkpoints and config output.
     #[arg(long, default_value = "runs/action-model")]
     checkpoint_dir: PathBuf,
@@ -123,7 +127,14 @@ fn main() -> Result<()> {
     println!("  {} validation sequences", val_seqs.len());
 
     // --- Build model config ---
-    let config = SyncopateModelConfig::preset_action(ACTION_VOCAB_SIZE, args.seq_len);
+    let kernel = match args.kernel.to_ascii_lowercase().as_str() {
+        "softmax" => AttentionKernel::Softmax,
+        "higher-order" | "higher_order" | "higherorder" | "ho" => AttentionKernel::HigherOrder,
+        other => bail!("unknown kernel '{other}', expected 'softmax' or 'higher-order'"),
+    };
+    let config = SyncopateModelConfig::preset_action(ACTION_VOCAB_SIZE, args.seq_len)
+        .with_attention_kernel(kernel);
+    println!("kernel: {:?}", kernel);
     let param_count = config.estimated_parameter_count();
     println!(
         "model: {param_count} params, vocab={}, seq_len={}",
