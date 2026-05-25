@@ -6,21 +6,14 @@ use burn::{
 use std::env;
 
 // ---------------------------------------------------------------------------
-// Inference-only backend (no autodiff)
-// ---------------------------------------------------------------------------
-
-/// Inference-only device type — same physical device, but without autodiff wrapper.
-pub type InferenceDevice = <DefaultBackend as BackendTypes>::Device;
-
-// ---------------------------------------------------------------------------
 // Backend selection (feature-gated)
 // ---------------------------------------------------------------------------
 
-/// Default CPU backend (Flex) — used when the `cuda` feature is not enabled.
+/// Default CPU backend (Flex), used when the `cuda` feature is not enabled.
 #[cfg(not(feature = "cuda"))]
 pub type DefaultBackend = burn::backend::Flex;
 
-/// Default CUDA backend — used when the `cuda` feature is enabled.
+/// Default CUDA backend, used when the `cuda` feature is enabled.
 #[cfg(feature = "cuda")]
 pub type DefaultBackend = burn::backend::Cuda;
 
@@ -37,9 +30,7 @@ pub type Device = <DefaultAutodiffBackend as BackendTypes>::Device;
 ///
 /// Also reads `SYNCOPATE_DEVICE` env var for manual override.
 pub fn default_device() -> Result<Device> {
-    let requested = env::var("SYNCOPATE_DEVICE")
-        .or_else(|_| env::var("MULTISCREEN_DEVICE"))
-        .unwrap_or_else(|_| "auto".to_string());
+    let requested = env::var("SYNCOPATE_DEVICE").unwrap_or_else(|_| "auto".to_string());
     match requested.trim().to_ascii_lowercase().as_str() {
         "" | "auto" => Ok(Device::default()),
         "cpu" | "flex" => {
@@ -82,6 +73,3 @@ pub type CudaDevice = <CudaAutodiffBackend as BackendTypes>::Device;
 /// Convenience alias for a Syncopate model backed by CUDA.
 #[cfg(feature = "cuda")]
 pub type CudaSyncopateModel = crate::model::SyncopateModel<CudaAutodiffBackend>;
-
-#[cfg(feature = "cuda")]
-pub type CudaMultiscreenModel = CudaSyncopateModel;

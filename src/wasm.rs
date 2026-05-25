@@ -198,7 +198,7 @@ pub enum RuntimeStatus {
     Idle,
     /// Currently fetching the checkpoint.
     Loading,
-    /// Ready to generate tokens.
+    /// Ready to predict action IDs.
     Ready,
     /// A previous operation failed.
     Error,
@@ -210,7 +210,7 @@ pub enum RuntimeStatus {
 ///
 /// ```rust,ignore
 /// let mut rt = BrowserRuntime::new();
-/// rt.load_from_url("./model.mpk", 8192, 128).await.unwrap();
+/// rt.load_from_url("./model-personal-v2.mpk", 23, 64).await.unwrap();
 /// let logits = rt.step(&prompt_ids).unwrap();
 /// // sample from logits, map IDs to your app actions, repeat...
 /// ```
@@ -238,7 +238,7 @@ impl BrowserRuntime {
     /// prepare the model for inference.
     ///
     /// `vocab_size` and `seq_len` must match the training config.
-    /// For the Dancing With My Code 1M preset they are 8192 and 128.
+    /// For the Dancing With My Code action model they are 23 and 64.
     pub async fn load_from_url(
         &mut self,
         url: &str,
@@ -389,7 +389,7 @@ impl BrowserRuntime {
         Ok(BrowserModel::Cpu { model, device })
     }
 
-    /// Single async forward pass → logits for the last token position.
+    /// Single async forward pass -> logits for the last action position.
     ///
     /// `context_ids` is the full sequence so far (prompt + generated).
     /// Returns a `Vec<f32>` of length `vocab_size`.
@@ -521,13 +521,13 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
     let json: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("parse config.json: {e}"))?;
 
-    let vocab = json["vocab_size"].as_u64().unwrap_or(3200) as usize;
-    let seq = json["seq_len"].as_u64().unwrap_or(128) as usize;
+    let vocab = json["vocab_size"].as_u64().unwrap_or(23) as usize;
+    let seq = json["seq_len"].as_u64().unwrap_or(64) as usize;
     let layers = json["layers"].as_u64().unwrap_or(2) as usize;
-    let d_model = json["d_model"].as_u64().unwrap_or(96) as usize;
+    let d_model = json["d_model"].as_u64().unwrap_or(64) as usize;
     let attention_heads = json["attention_heads"].as_u64().unwrap_or(4) as usize;
     let kv_heads = json["kv_heads"].as_u64().unwrap_or(1) as usize;
-    let intermediate_size = json["intermediate_size"].as_u64().unwrap_or(256) as usize;
+    let intermediate_size = json["intermediate_size"].as_u64().unwrap_or(128) as usize;
 
     Ok(SyncopateModelConfig::from_dimensions(
         vocab,

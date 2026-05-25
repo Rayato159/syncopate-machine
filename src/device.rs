@@ -1,7 +1,7 @@
 //! Device abstraction for CPU and CUDA.
 
 use crate::error::Result;
-use crate::runtime::Device;
+use crate::runtime::{Device, default_device};
 
 /// Returns the default device for the active backend.
 ///
@@ -16,7 +16,7 @@ use crate::runtime::Device;
 /// }
 /// ```
 pub fn auto_device() -> Result<Device> {
-    Ok(Device::default())
+    default_device()
 }
 
 /// Returns the default CPU device.
@@ -51,7 +51,7 @@ pub fn cuda(_index: usize) -> Result<Device> {
     Ok(Device::default())
 }
 
-/// Returns an error — CUDA is not compiled in.
+/// Returns an error because CUDA is not compiled in.
 #[cfg(not(feature = "cuda"))]
 pub fn cuda(_index: usize) -> Result<Device> {
     Err(crate::error::Error::Config(

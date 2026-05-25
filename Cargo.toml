@@ -1,7 +1,7 @@
 [package]
 name = "syncopate-machine"
 authors = ["Ruangyot Nanchiang <rayato159@gmail.com>"]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 license = "MIT"
 description = "A tiny Rust transformer for game NPC/action chat, powered by Burn."
@@ -13,6 +13,7 @@ include = [
     "src/**",
     "examples/train_action_model.rs",
     "examples/build_action_data.py",
+    "examples/action-data/**",
     "tests/**",
     "Cargo.toml",
     "README.md",

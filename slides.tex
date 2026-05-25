@@ -1,647 +1,311 @@
-\documentclass[10pt, aspectratio=169]{beamer}
+\documentclass[10pt,aspectratio=169]{beamer}
+\tracinglostchars=0
 
-% ── Theme & Colors ──────────────────────────────────────────────
 \usetheme{Madrid}
 \usecolortheme{default}
 
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usetikzlibrary{arrows.meta,positioning,fit}
+
 \definecolor{attnblue}{RGB}{0,102,204}
-\definecolor{ffngreen}{RGB}{0,153,76}
-\definecolor{normorg}{RGB}{230,126,34}
-\definecolor{embpurple}{RGB}{128,0,128}
+\definecolor{hotpink}{RGB}{255,38,142}
+\definecolor{acid}{RGB}{255,220,0}
+\definecolor{mint}{RGB}{37,190,140}
+\definecolor{darkbg}{RGB}{29,36,45}
 \definecolor{lightbg}{RGB}{245,245,250}
 
 \setbeamercolor{structure}{fg=attnblue}
-\setbeamercolor{frametitle}{bg=attnblue!90!black, fg=white}
-\setbeamercolor{title}{bg=attnblue!90!black, fg=white}
-\setbeamercolor{block title}{bg=attnblue!80, fg=white}
+\setbeamercolor{frametitle}{bg=darkbg,fg=white}
+\setbeamercolor{title}{bg=darkbg,fg=white}
+\setbeamercolor{block title}{bg=attnblue!85!black,fg=white}
 \setbeamercolor{block body}{bg=lightbg}
-\setbeamercolor{block title alerted}{bg=red!70!black, fg=white}
-\setbeamercolor{block title example}{bg=ffngreen!80, fg=white}
-
-% ── Packages ────────────────────────────────────────────────────
-\usepackage{amsmath,amssymb}
-\usepackage{booktabs}
-\usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, fit, calc, decorations.pathreplacing}
-\usepackage{array}
-\usepackage{xcolor}
-
-% ── Metadata ────────────────────────────────────────────────────
-\title[Syncopate-Machine]{Syncopate-Machine\\[4pt]
-  \large A Tiny Transformer for Action Sequences}
-\subtitle{Architecture Deep Dive --- From Math to 71K Parameters}
-\author{Syncopate-Machine Project}
-\date{\today}
-\inframe{}
-
-% ── Footer with frame numbers ──────────────────────────────────
+\setbeamercolor{alerted text}{fg=hotpink}
+\setbeamercolor{author in head/foot}{bg=darkbg,fg=white}
+\setbeamercolor{title in head/foot}{bg=attnblue!85!black,fg=white}
+\setbeamercolor{date in head/foot}{bg=darkbg,fg=white}
+\setbeamertemplate{navigation symbols}{}
 \setbeamertemplate{footline}{%
   \leavevmode%
   \hbox{%
-    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,center]
-      {author in head/foot}%
-      \usebeamerfont{author in head/foot}\insertshortauthor
+    \begin{beamercolorbox}[wd=.33\paperwidth,ht=2.25ex,dp=1ex,center]{author in head/foot}
+      \normalfont\scriptsize syncopate-machine
     \end{beamercolorbox}%
-    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,center]
-      {title in head/foot}%
-      \usebeamerfont{title in head/foot}\insertshorttitle
+    \begin{beamercolorbox}[wd=.34\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}
+      \normalfont\scriptsize action IDs, not tokenizer text
     \end{beamercolorbox}%
-    \begin{beamercolorbox}[wd=.333\paperwidth,ht=2.25ex,dp=1ex,right]
-      {date in head/foot}%
-      \usebeamerfont{date in head/foot}
-      \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
+    \begin{beamercolorbox}[wd=.33\paperwidth,ht=2.25ex,dp=1ex,right]{date in head/foot}
+      \normalfont\scriptsize \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
     \end{beamercolorbox}}%
   \vskip0pt%
 }
 
+\title[Syncopate-Machine]{Syncopate-Machine}
+\subtitle{Tiny Browser Transformer for Action-Sequence Chat}
+\author{Dancing With My Code}
+\date{Action-only architecture, 2026-05-25}
+
 \begin{document}
 
-% ================================================================
-%  TITLE
-% ================================================================
 \begin{frame}[plain]
   \titlepage
 \end{frame}
 
-% ================================================================
-\section{Introduction}
-% ================================================================
+\section{Contract}
 
-% ---------------------------------------------------------------
-\begin{frame}{What Is It?}
-  \begin{columns}[T]
-    \begin{column}{0.55\textwidth}
-      \begin{itemize}
-        \item \textbf{Decoder-only} transformer (LLaMA-style)
-        \item Predicts \alert{integer action IDs}, not text tokens
-        \item Runs in browser via \textbf{WASM / WebGPU}
-        \item Built on the \textbf{Burn} deep-learning framework
-        \item Smallest preset: \alert{71\,K parameters}
-      \end{itemize}
-    \end{column}
-    \begin{column}{0.4\textwidth}
-      \centering
-      \begin{tikzpicture}[
-        box/.style={draw, rounded corners=3pt, minimum width=3.2cm,
-                     minimum height=0.7cm, align=center, font=\small},
-        >=Stealth
-      ]
-        \node[box, fill=embpurple!15] (tok) {Action IDs\\$[3, 17, 5, \ldots]$};
-        \node[box, fill=attnblue!15, below=0.4cm of tok] (model) {Syncopate\\Transformer};
-        \node[box, fill=ffngreen!15, below=0.4cm of model] (out) {Next Action\\Prediction};
-        \draw[->, thick] (tok) -- (model);
-        \draw[->, thick] (model) -- (out);
-      \end{tikzpicture}
-    \end{column}
-  \end{columns}
-\end{frame}
-
-% ================================================================
-\section{Architecture}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{Architecture Diagram}
-  \centering
+\begin{frame}{The New Contract}
+  \begin{center}
   \begin{tikzpicture}[
-    block/.style={draw, rounded corners=3pt, minimum width=6.4cm,
-                  minimum height=0.65cm, align=center, font=\small},
-    lbl/.style={font=\scriptsize\itshape, text=gray},
-    arr/.style={-{Stealth[length=5pt]}, thick},
-    >=Stealth
+    node distance=0.42cm,
+    box/.style={draw,rounded corners=3pt,minimum width=8.2cm,
+      minimum height=0.58cm,align=center,font=\small},
+    arr/.style={-{Stealth[length=5pt]},thick}
   ]
-    % Input
-    \node[block, fill=embpurple!12] (input) {Input Tokens $\mathbf{x} \in \mathbb{Z}^{L}$};
+    \node[box,fill=acid!25] (user) {User text: English or Thai};
+    \node[box,fill=mint!20,below=of user] (classify)
+      {Website classifier: input Action + Lang};
+    \node[box,fill=attnblue!15,below=of classify] (model)
+      {syncopate-machine predicts the next action-ID sequence};
+    \node[box,fill=hotpink!14,below=of model] (graph)
+      {Response graph chooses short message text + mood};
+    \node[box,fill=lightbg,below=of graph] (ui)
+      {Chat UI streams message; GIF swaps by mood};
 
-    % Embedding
-    \node[block, fill=embpurple!22, below=0.35cm of input] (emb)
-      {Token Embedding\quad $\mathbf{E} \in \mathbb{R}^{V \times d}$};
-
-    % Block (dashed)
-    \node[block, fill=normorg!18, below=0.35cm of emb] (norm1)
-      {{\color{normorg}\textbf{RMSNorm}}};
-    \node[block, fill=attnblue!18, below=0.3cm of norm1] (attn)
-      {{\color{attnblue}\textbf{Causal Attention}} (RoPE + GQA)};
-    \node[below=0.15cm of attn, lbl] (res1) {$\bigoplus$ residual};
-
-    \node[block, fill=normorg!18, below=0.25cm of res1] (norm2)
-      {{\color{normorg}\textbf{RMSNorm}}};
-    \node[block, fill=ffngreen!18, below=0.3cm of norm2] (ffn)
-      {{\color{ffngreen}\textbf{SwiGLU FFN}}};
-    \node[below=0.15cm of ffn, lbl] (res2) {$\bigoplus$ residual};
-
-    % Fit box around block
-    \node[draw, dashed, rounded corners=5pt, inner sep=6pt,
-          fit=(norm1)(attn)(res1)(norm2)(ffn)(res2),
-          label={[font=\small\bfseries]left:{$\times N$}}] (blk) {};
-
-    % Final norm + output
-    \node[block, fill=normorg!18, below=0.4cm of blk] (fnorm)
-      {Final {\color{normorg}\textbf{RMSNorm}}};
-    \node[block, fill=embpurple!22, below=0.35cm of fnorm] (proj)
-      {Output Projection\quad ($\mathbf{W} = \mathbf{E}^{\!\top}$, weight-tied)};
-
-    % Arrows
-    \draw[arr] (input) -- (emb);
-    \draw[arr] (emb)   -- (norm1);
-    \draw[arr] (norm1) -- (attn);
-    \draw[arr] (attn)  -- (res1);
-    \draw[arr] (res1)  -- (norm2);
-    \draw[arr] (norm2) -- (ffn);
-    \draw[arr] (ffn)   -- (res2);
-    \draw[arr] (blk.south) -- (fnorm);
-    \draw[arr] (fnorm) -- (proj);
+    \draw[arr] (user) -- (classify);
+    \draw[arr] (classify) -- (model);
+    \draw[arr] (model) -- (graph);
+    \draw[arr] (graph) -- (ui);
   \end{tikzpicture}
-\end{frame}
+  \end{center}
 
-% ================================================================
-\section{Normalization}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{RMSNorm}
-  \begin{block}{Formula}
-    \[
-      \text{\color{normorg}RMSNorm}(\mathbf{x})
-      \;=\;
-      \frac{\mathbf{x}}{\sqrt{\operatorname{mean}(\mathbf{x}^{2}) + \varepsilon}}
-      \;\odot\;
-      \mathbf{w}
-    \]
+  \smallskip
+  \begin{block}{Hard rule}
+    \small
+    The model no longer predicts tokenizer pieces or raw words. It predicts
+    \alert{action IDs}. Text is owned by the website response graph.
   \end{block}
-
-  \medskip
-
-  \begin{itemize}
-    \item \textbf{No centering} (no mean subtraction) --- just root-mean-square scaling
-    \item Learnable weight vector $\mathbf{w}$, initialized to $\mathbf{1.0}$
-    \item $\varepsilon = 10^{-5}$ for numerical stability
-  \end{itemize}
-
-  \medskip
-
-  \begin{exampleblock}{Code Reference}
-    \ttfamily\small
-    denom = x.square().mean\_dim(2).add\_scalar(eps).sqrt();\\
-    output = (x / denom) * weight
-  \end{exampleblock}
 \end{frame}
 
-% ================================================================
-\section{Positional Encoding}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{RoPE --- Concept}
-  \textbf{Rotary Position Embedding} encodes position by
-  \emph{rotating pairs of dimensions} in the embedding space.
-
-  \bigskip
-
-  \begin{itemize}
-    \item No learned positional embeddings needed
-    \item Base frequency $\theta = 10\,000$
-    \item Per-pair frequency:
-      \[
-        \theta_k = \theta^{\,-2k / d_{\text{head}}},
-        \qquad k = 0, 1, \ldots, \tfrac{d_{\text{head}}}{2} - 1
-      \]
-    \item Rotation applied to \textbf{Q} and \textbf{K} \emph{before} attention
-    \item Relative position emerges naturally from dot products:
-      $\mathbf{q}_m^{\!\top} \mathbf{k}_n$
-      depends only on $m - n$
-  \end{itemize}
-\end{frame}
-
-% ---------------------------------------------------------------
-\begin{frame}{RoPE --- Formula}
-  For each pair $(x_{2k},\; x_{2k+1})$ at position $m$:
-
-  \begin{block}{2D Rotation by Angle $m\theta_k$}
-    \[
-      \begin{aligned}
-        \text{RoPE}(\mathbf{x}, m)_{2k}
-          &= x_{2k} \cos(m\theta_k)
-           - x_{2k+1} \sin(m\theta_k) \\[6pt]
-        \text{RoPE}(\mathbf{x}, m)_{2k+1}
-          &= x_{2k} \sin(m\theta_k)
-           + x_{2k+1} \cos(m\theta_k)
-      \end{aligned}
-    \]
-  \end{block}
-
-  \medskip
-  \begin{itemize}
-    \item Low-frequency dims (small $k$) rotate \textbf{slowly}
-    \item High-frequency dims (large $k$) rotate \textbf{quickly}
-    \item Equivalent to complex-element-wise multiplication:
-      $x_k \cdot e^{i m\theta_k}$
-  \end{itemize}
-\end{frame}
-
-% ---------------------------------------------------------------
-\begin{frame}{RoPE --- Worked Example}
-  \small
-  Config: $d_{\text{head}} = 16 \Rightarrow 8$ pairs \qquad Position $m = 3$
-
-  \medskip
-
+\begin{frame}{Why The Tokenizer Got Fired}
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
-      \centering
-      \textbf{Frequencies}
-
-      \medskip
-      \begin{tabular}{cccl}
-        \toprule
-        $k$ & $\theta_k$ & $m\theta_k$ & \\
-        \midrule
-        0 & $10000^{0}      = 1.000$  & $3.000$ \\
-        1 & $10000^{-0.125} \approx 0.316$ & $0.949$ \\
-        2 & $10000^{-0.250} \approx 0.100$ & $0.300$ \\
-        3 & $10000^{-0.375} \approx 0.032$ & $0.095$ \\
-        \bottomrule
-      \end{tabular}
+      \begin{block}{Old Path}
+        \begin{itemize}
+          \item SentencePiece tokenizer
+          \item Text-token prediction
+          \item Browser had to decode words
+          \item More room for weird repeats
+          \item Bigger checkpoint and slower UI
+        \end{itemize}
+      \end{block}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \centering
-      \textbf{Rotation of pair $k{=}0$}
-
-      \medskip
-      Input pair: $(x_0, x_1) = (1.0,\; 0.5)$
-
-      \[
-        \begin{aligned}
-          x'_0 &= 1.0 \cos 3.0 - 0.5 \sin 3.0 \\
-               &\approx -1.12 \\
-          x'_1 &= 1.0 \sin 3.0 + 0.5 \cos 3.0 \\
-               &\approx 0.03
-        \end{aligned}
-      \]
-
-      \medskip
-      \small
-      (Values rounded; $\cos 3 \approx -0.990$, $\sin 3 \approx 0.141$)
+      \begin{block}{New Path}
+        \begin{itemize}
+          \item No tokenizer at runtime
+          \item 23 integer action IDs
+          \item Website owns language and message style
+          \item Mood is explicit for animation
+          \item Tiny checkpoint, browser-friendly
+        \end{itemize}
+      \end{block}
     \end{column}
   \end{columns}
+
+  \bigskip
+  \centering
+  \alert{Less magic. More control. Fewer stupid browser failures.}
 \end{frame}
 
-% ================================================================
-\section{Attention}
-% ================================================================
+\section{Vocabulary}
 
-% ---------------------------------------------------------------
-\begin{frame}{GQA --- Concept}
+\begin{frame}{Action Vocabulary}
+  \small
+  \centering
+  \begin{tabular}{rll@{\hspace{0.9cm}}rll}
+    \toprule
+    \textbf{ID} & \textbf{Name} & \textbf{Role}
+      & \textbf{ID} & \textbf{Name} & \textbf{Role} \\
+    \midrule
+     0 & PAD & padding       & 12 & Compliment & nice input \\
+     1 & SOS & start         & 13 & Agree & yes / same \\
+     2 & EOS & end           & 14 & Disagree & no / wrong \\
+     3 & SEP & separator     & 15 & General & fallback \\
+     4 & Unknown & unused fallback & 16 & Eating & food talk \\
+     5 & Greeting & hello    & 17 & DailyLife & casual life \\
+     6 & Farewell & goodbye  & 18 & RustGo & Rust beats Go \\
+     7 & Frustrated & annoyed & 19 & Identity & who am I \\
+     8 & Sad & low mood      & 20 & ShitTalk & roast mode \\
+     9 & Happy & upbeat      & 21 & TH & Thai \\
+    10 & Question & question  & 22 & EN & English \\
+    11 & Insult & user swears &    &    & \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\section{Model}
+
+\begin{frame}{Tiny Model Shape}
   \begin{columns}[T]
-    \begin{column}{0.55\textwidth}
-      \textbf{Standard Multi-Head Attention (MHA):}
-      \begin{itemize}
-        \item Each of $n_{\text{heads}}$ heads has separate Q, K, V
-      \end{itemize}
-
-      \medskip
-      \textbf{{\color{attnblue}Grouped-Query Attention (GQA):}}
-      \begin{itemize}
-        \item $n_{\text{kv}} < n_{\text{heads}}$
-        \item K and V heads are \alert{shared} across groups
-        \item KV heads repeated $\lceil n_{\text{heads}} / n_{\text{kv}} \rceil$
-              times to match Q
-      \end{itemize}
-
-      \bigskip
-      \textbf{Benefit:}
-      \begin{itemize}
-        \item Smaller KV cache
-        \item Faster inference
-        \item Fewer parameters
-      \end{itemize}
+    \begin{column}{0.45\textwidth}
+      \begin{block}{Browser Model}
+        \begin{tabular}{lr}
+          \toprule
+          Vocab & 23 \\
+          Context & 64 \\
+          Layers & 2 \\
+          Width & 64 \\
+          Attention heads & 4 \\
+          KV heads & 1 \\
+          FFN width & 128 \\
+          Params & 71,424 \\
+          \bottomrule
+        \end{tabular}
+      \end{block}
     \end{column}
-    \begin{column}{0.42\textwidth}
-      \centering
-      \begin{tikzpicture}[
-        qbox/.style={draw, fill=attnblue!20, minimum size=0.5cm,
-                     font=\scriptsize},
-        kbox/.style={draw, fill=ffngreen!30, minimum size=0.5cm,
-                     font=\scriptsize},
-        >=Stealth, scale=0.9, transform shape
-      ]
-        % MHA
-        \node[font=\small\bfseries] at (0, 3.3) {MHA};
-        \foreach \i in {0,...,3} {
-          \node[qbox] (q\i) at (\i*0.7, 2.7) {Q};
-          \node[kbox] (k\i) at (\i*0.7, 2.0) {K\,\i};
-          \draw[->, thin] (q\i) -- (k\i);
-        }
-
-        % GQA
-        \node[font=\small\bfseries] at (0, 1.2) {GQA};
-        \foreach \i in {0,...,3} {
-          \node[qbox] (gq\i) at (\i*0.7, 0.6) {Q};
-        }
-        \node[kbox, minimum width=2.4cm] (gk) at (1.05, -0.15) {K\,(shared)};
-        \foreach \i in {0,...,3} {
-          \draw[->, thin] (gq\i) -- (gk);
-        }
-      \end{tikzpicture}
+    \begin{column}{0.5\textwidth}
+      \begin{block}{Decoder Block}
+        \begin{itemize}
+          \item RMSNorm
+          \item Causal attention
+          \item RoPE position rotation
+          \item Grouped-query attention
+          \item SwiGLU feed-forward
+          \item Weight-tied output projection
+        \end{itemize}
+      \end{block}
     \end{column}
   \end{columns}
+
+  \bigskip
+  \centering
+  The neural model decides \alert{what kind of reply happens next};
+  the website decides \alert{what words hit the chat box}.
 \end{frame}
 
-% ---------------------------------------------------------------
-\begin{frame}{GQA --- Formula}
-  \begin{block}{Scaled Dot-Product Attention with Causal Mask}
-    \[
-      {\color{attnblue}
-      \operatorname{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
-      \;=\;
-      \operatorname{softmax}\!\Bigl(
-        \frac{\mathbf{Q}\mathbf{K}^{\!\top}}{\sqrt{d_k}}
-        + \mathbf{M}
-      \Bigr)
-      \,\mathbf{V}}
-    \]
-  \end{block}
+\begin{frame}{Parameter Count}
+  \small
+  Config: $V=23$, $N=2$, $d=64$, $n_h=4$, $n_{kv}=1$, $d_k=16$,
+  $d_{ff}=128$
 
-  \smallskip
+  \medskip
+  \centering
+  \begin{tabular}{llr}
+    \toprule
+    \textbf{Component} & \textbf{Formula} & \textbf{Params} \\
+    \midrule
+    Embedding & $V \times d = 23 \times 64$ & 1,472 \\
+    Attention per layer & $d^2 + 2dn_{kv}d_k + d^2$ & 10,240 \\
+    FFN per layer & $3dd_{ff}$ & 24,576 \\
+    Norms per layer & $2d$ & 128 \\
+    Final norm & $d$ & 64 \\
+    \midrule
+    Total & $1472 + 2(10240 + 24576 + 128) + 64$ & \alert{71,424} \\
+    \bottomrule
+  \end{tabular}
+
+  \medskip
+  Output projection reuses the embedding matrix, so it adds zero new params.
+\end{frame}
+
+\section{Runtime}
+
+\begin{frame}{Browser Runtime}
   \begin{itemize}
-    \item $\mathbf{M}$: causal mask ($-\infty$ for future positions)
-    \item $\mathbf{Q}$: $(B,\; n_{\text{heads}},\; L,\; d_k)$
-    \item $\mathbf{K}, \mathbf{V}$: $(B,\; n_{\text{kv}},\; L,\; d_k)$
-          $\;\to\;$ repeated to match $n_{\text{heads}}$
+    \item Website loads \texttt{model-personal-v2.mpk}
+    \item Website loads \texttt{model-config-personal-v2.json}
+    \item Runtime tries WebGPU first when requested
+    \item Auto mode falls back to CPU when WebGPU is unavailable
+    \item Chrome without a valid WebGPU adapter should not kill the chat box
+    \item UI streams message text from graph output, not raw model tokens
   \end{itemize}
 
-  \medskip
-  \begin{block}{Weight Matrices}
-    \[
-      \mathbf{W}_Q \in \mathbb{R}^{d \times d},\;\;
-      \mathbf{W}_K \in \mathbb{R}^{d \times n_{\text{kv}} \cdot d_k},\;\;
-      \mathbf{W}_V \in \mathbb{R}^{d \times n_{\text{kv}} \cdot d_k},\;\;
-      \mathbf{W}_O \in \mathbb{R}^{d \times d}
-    \]
+  \bigskip
+  \begin{block}{Mood Contract}
+    Model output action sequence maps to one mood:
+    \texttt{normal}, \texttt{happy}, \texttt{frustrated}, or \texttt{sad}.
+    The mascot GIF changes from that mood.
   \end{block}
 \end{frame}
 
-% ---------------------------------------------------------------
-\begin{frame}{GQA --- Worked Example (Action Preset)}
-  Config: $d{=}64$,\; $n_{\text{heads}}{=}4$,\;
-  $n_{\text{kv}}{=}1$,\; $d_k{=}16$
-
-  \bigskip
-  \centering
-  \begin{tabular}{llrl}
-    \toprule
-    \textbf{Matrix} & \textbf{Shape} & \textbf{Params} & \\
-    \midrule
-    $\mathbf{W}_Q$ & $64 \times 64$          & 4\,096 & \\
-    $\mathbf{W}_K$ & $64 \times 16$          & 1\,024 & {\small only 1 KV head!} \\
-    $\mathbf{W}_V$ & $64 \times 16$          & 1\,024 & \\
-    $\mathbf{W}_O$ & $64 \times 64$          & 4\,096 & \\
-    \midrule
-    \textbf{Total per layer} & & \textbf{10\,240} & \\
-    \bottomrule
-  \end{tabular}
-
-  \bigskip
-  \alert{KV saving:}
-  MHA would need $64{\times}64 + 64{\times}64 = 8\,192$ for K$+$V.\\
-  GQA needs only $64{\times}16 + 64{\times}16 = 2\,048$
-  --- \alert{75\,\% less!}
-\end{frame}
-
-% ================================================================
-\section{Feed-Forward Network}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{SwiGLU Feed-Forward Network}
-  \begin{block}{Formula}
-    \[
-      {\color{ffngreen}
-      \operatorname{FFN}(\mathbf{x})
-      \;=\;
-      \Bigl(
-        \operatorname{SiLU}(\mathbf{x}\,\mathbf{W}_{\text{gate}})
-        \;\odot\;
-        \mathbf{x}\,\mathbf{W}_{\text{up}}
-      \Bigr)
-      \;\mathbf{W}_{\text{down}}}
-    \]
+\begin{frame}{Training Path}
+  \begin{block}{Data Build}
+    \texttt{python examples/build\_action\_data.py --offline}
   \end{block}
 
-  \smallskip
-  where \; $\operatorname{SiLU}(z) = z \cdot \sigma(z)$, \;
-  $\sigma(z) = \frac{1}{1 + e^{-z}}$ \; (sigmoid).
+  \begin{block}{CUDA Training}
+    \small
+    \texttt{cargo run --release --features cuda --example train\_action\_model --}\\
+    \texttt{\quad --steps 3000 --batch-size 32 --lr 0.003}\\
+    \texttt{\quad --checkpoint-dir runs/action-model-personal-v2}
+  \end{block}
 
-  \bigskip
-
-  \textbf{Three} weight matrices (not two like standard ReLU FFN):
-
-  \medskip
-  \centering
-  \begin{tabular}{lll}
-    \toprule
-    \textbf{Matrix} & \textbf{Shape} & \textbf{Role} \\
-    \midrule
-    $\mathbf{W}_{\text{gate}}$ & $(d \times d_{\text{ff}})$ & Gating \\
-    $\mathbf{W}_{\text{up}}$   & $(d \times d_{\text{ff}})$ & Value \\
-    $\mathbf{W}_{\text{down}}$ & $(d_{\text{ff}} \times d)$ & Projection back \\
-    \bottomrule
-  \end{tabular}
-\end{frame}
-
-% ---------------------------------------------------------------
-\begin{frame}{SwiGLU --- Worked Example}
-  Config: $d = 64$, \; $d_{\text{ff}} = 128$
-
-  \bigskip
-  \centering
-  \begin{tabular}{llrl}
-    \toprule
-    \textbf{Matrix} & \textbf{Shape} & \textbf{Params} & \\
-    \midrule
-    $\mathbf{W}_{\text{gate}}$ & $64 \times 128$ & 8\,192 & \\
-    $\mathbf{W}_{\text{up}}$   & $64 \times 128$ & 8\,192 & \\
-    $\mathbf{W}_{\text{down}}$ & $128 \times 64$ & 8\,192 & \\
-    \midrule
-    \textbf{Total per layer}   &                 & \textbf{24\,576} & \\
-    \bottomrule
-  \end{tabular}
-
-  \bigskip
-  Note: $3 \times d \times d_{\text{ff}} = 3 \times 64 \times 128 = 24\,576$
-\end{frame}
-
-% ================================================================
-\section{Masking \& Training}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{Causal Masking}
-  Decoder-only: each token can only attend to
-  \textbf{itself and previous tokens}.
-
-  \bigskip
-  \centering
-  \begin{tikzpicture}[scale=0.85, transform shape]
-    \def\N{5}
-    % Grid
-    \foreach \i in {1,...,\N} {
-      \foreach \j in {1,...,\N} {
-        \pgfmathtruncatemacro{\allowed}{\j <= \i ? 1 : 0}
-        \ifnum\allowed=1
-          \fill[attnblue!15] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
-        \else
-          \fill[red!10] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
-        \fi
-        \draw[gray!50] (\j-1, \N-\i) rectangle (\j, \N-\i+1);
-      }
-    }
-    % Labels
-    \foreach \i in {1,...,\N} {
-      \node[font=\small] at (\i-0.5, \N+0.3) {$t_{\i}$};
-      \node[font=\small] at (-0.3, \N-\i+0.5) {$t_{\i}$};
-    }
-    \node[font=\small] at (2.5, -0.5) {Keys $\rightarrow$};
-    \node[font=\small, rotate=90] at (-0.9, 2.5) {Queries $\rightarrow$};
-
-    % Annotation
-    \node[attnblue!70!black, font=\small, align=left] at (7.5, 3.5)
-      {{\color{attnblue}\textbf{Blue}} = allowed\\($0$ in mask)};
-    \node[red!60!black, font=\small, align=left] at (7.5, 2.2)
-      {{\color{red!60!black}\textbf{Red}} = blocked\\($-\infty$ in mask)};
-    \node[font=\small, align=left] at (7.5, 0.8)
-      {After softmax:\\
-       blocked positions $\to 0$ prob.};
-  \end{tikzpicture}
-\end{frame}
-
-% ================================================================
-\section{Parameter Analysis}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{Full Parameter Count --- 71K Preset}
-  \small
-  Config: $V{=}23$, $N{=}2$, $d{=}64$, $n_h{=}4$, $n_{\text{kv}}{=}1$,
-  $d_k{=}16$, $d_{\text{ff}}{=}128$
-
-  \medskip
-  \centering
-  \begin{tabular}{llrr}
-    \toprule
-    \textbf{Component} & \textbf{Formula} & \textbf{Computation} & \textbf{Params} \\
-    \midrule
-    Embedding
-      & $V \times d$
-      & $23 \times 64$
-      & 1\,472 \\[4pt]
-    \multicolumn{4}{l}{\textit{Per layer} ($\times 2$):} \\
-    \quad Attention
-      & $d^2 + 2 \cdot d \cdot n_{\text{kv}} \cdot d_k + d^2$
-      & $4096 + 2048 + 4096$
-      & 10\,240 \\
-    \quad FFN
-      & $3 \cdot d \cdot d_{\text{ff}}$
-      & $3 \times 64 \times 128$
-      & 24\,576 \\
-    \quad Norms
-      & $2 \times d$
-      & $2 \times 64$
-      & 128 \\
-    \quad \textit{Subtotal}
-      & & & \textit{34\,944} \\[4pt]
-    Final norm
-      & $d$
-      & $64$
-      & 64 \\
-    \midrule
-    \textbf{Total}
-      & $1472 + 2 \times 34944 + 64$
-      & & \alert{\textbf{71\,424}} \\
-    \bottomrule
-  \end{tabular}
-
-  \smallskip
-  {\footnotesize Output projection is weight-tied with embedding
-  $\Rightarrow$ zero extra parameters.}
-\end{frame}
-
-% ---------------------------------------------------------------
-\begin{frame}{Parameter Presets}
-  \centering
-  \begin{tabular}{lrrrrrr}
-    \toprule
-    \textbf{Preset}
-      & $N$ & $d$ & $n_h$ & $n_{\text{kv}}$ & $d_{\text{ff}}$
-      & \textbf{Params} \\
-    \midrule
-    \alert{action} &  2 &  64 &  4 & 1 &   128 & $\sim$71\,K  \\
-    1M             &  2 &  96 &  4 & 1 &   256 & $\sim$1\,M   \\
-    5M             &  8 & 192 &  6 & 2 &   512 & $\sim$5\,M   \\
-    10M            & 10 & 256 &  8 & 2 &   704 & $\sim$10\,M  \\
-    50M            & 16 & 512 &  8 & 2 & 1\,408 & $\sim$50\,M  \\
-    100M           & 15 & 768 & 12 & 4 & 2\,048 & $\sim$100\,M \\
-    \bottomrule
-  \end{tabular}
-
-  \bigskip
-  All presets use the same vocabulary ($V{=}23$) and architecture.\\
-  Only width and depth change.
-\end{frame}
-
-% ================================================================
-\section{Design Philosophy}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{Why So Small?}
-  \begin{enumerate}
-    \item \textbf{Tiny vocabulary} --- action IDs ($V{=}23$)
-          vs.\ text ($V \sim 50\,000$)
-    \item \textbf{Weight-tied} output projection
-          --- no extra $d \times V$ matrix
-    \item \textbf{GQA} with $n_{\text{kv}}{=}1$
-          --- KV projections reduced by \alert{75\,\%}
-    \item \textbf{SwiGLU} gives better capacity per parameter
-          than plain ReLU FFN
-    \item \textbf{Designed for the browser}
-          --- 286\,KB checkpoint fits in memory
-  \end{enumerate}
-
-  \bigskip
-  \centering
-  \begin{tikzpicture}
-    \node[draw, rounded corners=6pt, fill=lightbg,
-          inner sep=10pt, font=\large]
-      {71\,K params $\;\longleftrightarrow\;$
-       286\,KB checkpoint $\;\longleftrightarrow\;$
-       runs in browser};
-  \end{tikzpicture}
-\end{frame}
-
-% ================================================================
-\section{References}
-% ================================================================
-
-% ---------------------------------------------------------------
-\begin{frame}{Thank You / References}
   \begin{itemize}
-    \setlength{\itemsep}{10pt}
-    \item \textbf{Full documentation:}
-          see \texttt{README.md} in the repository
-    \item \textbf{Burn framework:}
-          \url{https://github.com/tracel-ai/burn}
-    \item \textbf{LLaMA paper:}\\
-          Touvron et al., ``LLaMA: Open and Efficient Foundation
-          Language Models,'' 2023
-    \item \textbf{RoPE (RoFormer):}\\
-          Su et al., ``RoFormer: Enhanced Transformer with Rotary
-          Position Embedding,'' 2021
-    \item \textbf{GQA:}\\
-          Ainslie et al., ``GQA: Training Generalized Multi-Query
-          Transformer Models from Multi-Head Checkpoints,'' 2023
-    \item \textbf{SwiGLU:}\\
-          Shazeer, ``GLU Variants Improve Transformer,'' 2020
+    \item Training is CUDA-only by design.
+    \item Website runtime can choose WebGPU or CPU.
+    \item Training data is action sequences, not text-token corpora.
+  \end{itemize}
+\end{frame}
+
+\section{Cleanup}
+
+\begin{frame}{What Got Deleted}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Removed Code}
+        \begin{itemize}
+          \item \texttt{ChatModel}
+          \item \texttt{Trainer}
+          \item \texttt{infer\_tokens*}
+          \item old token generation APIs
+          \item legacy layout engine
+          \item old Multiscreen modules
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Removed Junk}
+        \begin{itemize}
+          \item SentencePiece experiment folder
+          \item \texttt{spm\_train.exe}
+          \item dead tokenizer examples
+          \item obsolete tests
+          \item stray ignored \texttt{nul} file
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+
+  \bigskip
+  \centering
+  Remaining crate surface: \alert{action model + training + browser runtime}.
+\end{frame}
+
+\begin{frame}{Deploy Shape}
+  \begin{itemize}
+    \item Build the Leptos site with \texttt{trunk build --release}
+    \item Ship the generated \texttt{dist/} directory to Vercel
+    \item Keep model assets in \texttt{dancing-with-my-code-v2/assets/}
+    \item Cache \texttt{.mpk} and \texttt{.json} assets aggressively
+    \item Do not ship old tokenizer artifacts
+  \end{itemize}
+
+  \bigskip
+  \begin{block}{Final State}
+    The website talks like Dancing With My Code. The model only nudges
+    conversation flow by action IDs. Clean split, less nonsense.
+  \end{block}
+\end{frame}
+
+\begin{frame}{References}
+  \begin{itemize}
+    \item Burn framework: \texttt{https://github.com/tracel-ai/burn}
+    \item RoPE / RoFormer: rotary position embeddings
+    \item GQA: grouped-query attention
+    \item SwiGLU: gated feed-forward block
+    \item Project docs: \texttt{README.md} and \texttt{DEVLOG.md}
   \end{itemize}
 \end{frame}
 

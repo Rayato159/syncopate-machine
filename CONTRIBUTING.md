@@ -20,7 +20,7 @@ Good contributions include:
 - Safer error handling and validation.
 - Burn backend improvements that keep the default CPU/Flex path working.
 - Architecture improvements with clear tests or training evidence.
-- Legacy layout/scoring fixes that do not muddy the NPC chat model API.
+- Action-model fixes that keep the browser path small and obvious.
 
 Please avoid:
 
@@ -60,12 +60,12 @@ you verified it in the PR notes.
 
 ## Code Style
 
-Keep changes narrow. If a PR starts as "fix one inference bug" and turns into a
+Keep changes narrow. If a PR starts as "fix one action-runtime bug" and turns into a
 full crate rewrite, split it.
 
 Prefer:
 
-- Plain names that match the Syncopate/NPC-chat API.
+- Plain names that match the Syncopate/action-chat API.
 - Explicit validation over `unwrap()` in library code.
 - Small tests that pin behavior.
 - README updates when public behavior changes.
@@ -78,7 +78,7 @@ return `Result` with a useful error.
 Use simple Conventional Commit-style messages:
 
 ```text
-fix: handle empty layout windows
+fix: handle empty action windows
 feat: add Burn recorder roundtrip test
 docs: explain default Flex backend
 ci: add Rust quality checks

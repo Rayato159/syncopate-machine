@@ -1,7 +1,7 @@
 //! Train a tiny action model on integer ID sequences.
 //!
 //! Data comes from `examples/action-data/train.txt` and `val.txt` where each
-//! line is a space-separated list of integer token IDs (vocab = 0..22).
+//! line is a space-separated list of integer action IDs (vocab = 0..22).
 //!
 //! # Quick start
 //!
@@ -55,7 +55,7 @@ struct Args {
 // Data loading
 // ---------------------------------------------------------------------------
 
-/// Read a text file where each line contains space-separated u32 token IDs.
+/// Read a text file where each line contains space-separated u32 action IDs.
 fn load_int_sequences(path: &PathBuf) -> Result<Vec<Vec<u32>>> {
     let file = fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let reader = std::io::BufReader::new(file);
@@ -68,7 +68,7 @@ fn load_int_sequences(path: &PathBuf) -> Result<Vec<Vec<u32>>> {
         }
         let ids: Vec<u32> = trimmed
             .split_whitespace()
-            .map(|s| s.parse::<u32>().context(format!("invalid token id: {s}")))
+            .map(|s| s.parse::<u32>().context(format!("invalid action id: {s}")))
             .collect::<Result<Vec<u32>>>()?;
         if !ids.is_empty() {
             sequences.push(ids);
@@ -163,7 +163,7 @@ fn main() -> Result<()> {
         warmup_steps: (args.steps / 10).max(10),
         weight_decay: 0.01,
         grad_clip_norm: Some(1.0),
-        pad_token_id: 0,
+        pad_action_id: 0,
         checkpoint_dir: None,
         checkpoint_interval: 0,
     };
@@ -184,7 +184,7 @@ fn main() -> Result<()> {
     let log_interval = (args.steps / 20).max(1);
     let _eval_interval = (args.steps / 5).max(1);
 
-    let report = model.train_token_sequences(&train_seqs, &training, &device, |step, loss| {
+    let report = model.train_action_sequences(&train_seqs, &training, &device, |step, loss| {
         // Write to CSV
         let _ = writeln!(&mut loss_csv, "{step},{loss}");
         let _ = loss_csv.flush();
@@ -240,11 +240,11 @@ fn main() -> Result<()> {
             &device,
         )?;
         println!(
-            "  val loss={:.4}  ppl={:.2}  accuracy={:.2}%  ({} tokens)",
+            "  val loss={:.4}  ppl={:.2}  accuracy={:.2}%  ({} action ids)",
             result.loss,
             result.perplexity,
             result.accuracy * 100.0,
-            result.total_tokens
+            result.total_predictions
         );
     }
 

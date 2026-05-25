@@ -20,7 +20,7 @@ const NEG_INF: f32 = -1.0e9;
 
 /// Supported Syncopate parameter budgets.
 ///
-/// The final count is approximate because token embeddings scale with the
+/// The final count is approximate because ID embeddings scale with the
 /// caller's vocabulary size. Use [`SyncopateModelConfig::estimated_parameter_count`]
 /// to inspect the count for a resolved config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,7 +84,7 @@ pub struct SyncopateModelConfig {
     pub seq_len: usize,
     /// Number of decoder blocks.
     pub layers: usize,
-    /// Token embedding and residual width.
+    /// Action-ID embedding and residual width.
     pub d_model: usize,
     /// Query heads.
     pub attention_heads: usize,
@@ -168,11 +168,6 @@ impl SyncopateModelConfig {
 
     pub fn preset_100m(vocab_size: usize, seq_len: usize) -> Self {
         Self::from_dimensions(vocab_size, seq_len, 15, 768, 12, 4, 2048)
-    }
-
-    /// Kept for callers that used the old API name.
-    pub fn paper_10m(vocab_size: usize, seq_len: usize) -> Self {
-        Self::preset_10m(vocab_size, seq_len)
     }
 
     pub fn with_attention_kernel(mut self, kernel: AttentionKernel) -> Self {
@@ -262,7 +257,7 @@ impl SyncopateModelConfig {
     }
 }
 
-/// Training options for token-sequence training.
+/// Training options for action-ID sequence training.
 #[derive(Clone, Debug)]
 pub struct ModelTrainingConfig {
     pub steps: usize,
@@ -272,7 +267,7 @@ pub struct ModelTrainingConfig {
     pub warmup_steps: usize,
     pub weight_decay: f64,
     pub grad_clip_norm: Option<f64>,
-    pub pad_token_id: u32,
+    pub pad_action_id: u32,
     /// Directory to save checkpoints into. When `None`, no checkpoints are
     /// saved during training.
     pub checkpoint_dir: Option<String>,
@@ -292,25 +287,9 @@ impl Default for ModelTrainingConfig {
             warmup_steps: 200,
             weight_decay: 0.1,
             grad_clip_norm: Some(1.0),
-            pad_token_id: 0,
+            pad_action_id: 0,
             checkpoint_dir: None,
             checkpoint_interval: 0,
-        }
-    }
-}
-
-/// Greedy generation options.
-#[derive(Clone, Debug)]
-pub struct ModelInferenceConfig {
-    pub max_new_tokens: usize,
-    pub pad_token_id: u32,
-}
-
-impl Default for ModelInferenceConfig {
-    fn default() -> Self {
-        Self {
-            max_new_tokens: 16,
-            pad_token_id: 0,
         }
     }
 }
@@ -334,19 +313,15 @@ pub struct EvaluationResult {
     pub loss: f32,
     /// Perplexity = exp(average_loss).
     pub perplexity: f32,
-    /// Fraction of tokens where argmax(logits) == target.
+    /// Fraction of action IDs where argmax(logits) == target.
     pub accuracy: f64,
     /// Number of batches evaluated.
     pub num_batches: usize,
-    /// Total number of unmasked tokens evaluated.
-    pub total_tokens: usize,
+    /// Total number of unmasked action IDs evaluated.
+    pub total_predictions: usize,
 }
 
-pub struct SyncopateModelOutput {
-    pub token_ids: Vec<u32>,
-}
-
-/// Burn-backed decoder-only language model for NPC chat.
+/// Burn-backed decoder-only transformer for action-ID prediction.
 #[derive(Module, Debug)]
 pub struct SyncopateModel<B: Backend = DefaultAutodiffBackend> {
     #[module(skip)]
@@ -358,13 +333,6 @@ pub struct SyncopateModel<B: Backend = DefaultAutodiffBackend> {
 
 /// Convenience alias for the default Burn Flex autodiff model.
 pub type DefaultSyncopateModel = SyncopateModel<DefaultAutodiffBackend>;
-
-/// Backward-compatible aliases from the old crate surface.
-pub type MultiscreenParameterBudget = SyncopateParameterBudget;
-pub type MultiscreenModelConfig = SyncopateModelConfig;
-pub type MultiscreenModelOutput = SyncopateModelOutput;
-pub type MultiscreenModel<B = DefaultAutodiffBackend> = SyncopateModel<B>;
-pub type DefaultMultiscreenModel = DefaultSyncopateModel;
 
 #[derive(Module, Debug)]
 struct SyncopateBlock<B: Backend> {
@@ -435,12 +403,12 @@ impl<B: Backend> SyncopateModel<B> {
         self.num_params()
     }
 
-    pub fn forward(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
-        let [batch, seq_len] = tokens.dims();
+    pub fn forward(&self, action_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+        let [batch, seq_len] = action_ids.dims();
         // Use `select` instead of `one_hot` + matmul. Burn's `one_hot` calls
         // `into_scalar()` internally for bounds validation, which panics on WASM
         // because synchronous blocking futures are unsupported there.
-        let indices = tokens.reshape([batch * seq_len]);
+        let indices = action_ids.reshape([batch * seq_len]);
         let mut x = self.token_embedding.val().select(0, indices).reshape([
             batch,
             seq_len,
@@ -476,112 +444,48 @@ impl<B: Backend> SyncopateModel<B> {
         Ok(())
     }
 
-    /// Generate tokens one at a time, invoking a callback for each newly
-    /// produced token.
-    pub fn infer_tokens_stream(
-        &self,
-        prompt: &[u32],
-        inference: &ModelInferenceConfig,
-        device: &B::Device,
-        mut on_token: impl FnMut(u32, usize) -> bool,
-    ) -> Result<SyncopateModelOutput> {
-        if prompt.is_empty() {
-            return Err(Error::Inference(
-                "prompt must contain at least one token".to_string(),
-            ));
-        }
-
-        let mut output = prompt.to_vec();
-        for i in 0..inference.max_new_tokens {
-            let next = self.predict_next_token(&output, inference.pad_token_id, device)?;
-            output.push(next);
-            if !on_token(next, i) {
-                break;
-            }
-        }
-
-        Ok(SyncopateModelOutput { token_ids: output })
-    }
-
-    /// Generate tokens and return them all at once.
-    pub fn infer_tokens(
-        &self,
-        prompt: &[u32],
-        inference: &ModelInferenceConfig,
-        device: &B::Device,
-    ) -> Result<SyncopateModelOutput> {
-        self.infer_tokens_stream(prompt, inference, device, |_, _| true)
-    }
-
-    pub fn predict_next_token(
-        &self,
-        context: &[u32],
-        pad_token_id: u32,
-        device: &B::Device,
-    ) -> Result<u32> {
-        if context.is_empty() {
-            return Err(Error::Inference(
-                "context must contain at least one token".to_string(),
-            ));
-        }
-
-        let input = context_window(context, self.config().seq_len, pad_token_id);
-        let last_index = context_last_index(context, self.config().seq_len)?;
-        let input = tensor_from_u32::<B, 2>(input, [1, self.config().seq_len], device)?;
-        let logits = self.forward(input);
-        let last_logits = logits
-            .slice([
-                0..1,
-                last_index..last_index + 1,
-                0..self.config().vocab_size,
-            ])
-            .reshape([self.config().vocab_size]);
-        let values = tensor_to_vec(last_logits)?;
-        argmax(&values).map(|idx| idx as u32)
-    }
-
     /// Run a forward pass and return the full logit tensor.
     pub fn forward_logits(
         &self,
         context: &[u32],
-        pad_token_id: u32,
+        pad_action_id: u32,
         device: &B::Device,
     ) -> Result<Tensor<B, 3>> {
         if context.is_empty() {
             return Err(Error::Inference(
-                "context must contain at least one token".to_string(),
+                "context must contain at least one action id".to_string(),
             ));
         }
 
-        let input = context_window(context, self.config().seq_len, pad_token_id);
+        let input = context_window(context, self.config().seq_len, pad_action_id);
         let input = tensor_from_u32::<B, 2>(input, [1, self.config().seq_len], device)?;
         Ok(self.forward(input))
     }
 
-    /// Evaluates the model on token sequences.
+    /// Evaluates the model on action-ID sequences.
     pub fn evaluate_on_sequences(
         &self,
         sequences: &[Vec<u32>],
         seq_len: usize,
         batch_size: usize,
-        pad_token_id: u32,
+        pad_action_id: u32,
         device: &B::Device,
     ) -> Result<EvaluationResult> {
-        let windows = TrainingWindows::from_sequences(sequences, seq_len, pad_token_id)?;
+        let windows = TrainingWindows::from_sequences(sequences, seq_len, pad_action_id)?;
         if windows.is_empty() {
             return Ok(EvaluationResult {
                 loss: f32::NAN,
                 perplexity: f32::NAN,
                 accuracy: 0.0,
                 num_batches: 0,
-                total_tokens: 0,
+                total_predictions: 0,
             });
         }
 
         let num_batches = windows.len().div_ceil(batch_size);
         let mut total_loss = 0.0_f64;
         let mut total_correct = 0_usize;
-        let mut total_tokens = 0_usize;
+        let mut total_predictions = 0_usize;
 
         for step in 0..num_batches {
             let batch = windows.batch::<B>(step, batch_size, device)?;
@@ -612,26 +516,26 @@ impl<B: Backend> SyncopateModel<B> {
                 .into_vec::<f32>()
                 .map_err(|err| Error::Training(err.to_string()))?;
 
-            for token_idx in 0..(b * s) {
-                if mask_vec[token_idx] <= 0.0 {
+            for position_idx in 0..(b * s) {
+                if mask_vec[position_idx] <= 0.0 {
                     continue;
                 }
-                let start = token_idx * v;
+                let start = position_idx * v;
                 let end = start + v;
                 let predicted = argmax(&logits_vec[start..end])?;
-                if predicted as i32 == targets_vec[token_idx] {
+                if predicted as i32 == targets_vec[position_idx] {
                     total_correct += 1;
                 }
-                total_tokens += 1;
+                total_predictions += 1;
             }
         }
 
         let loss = (total_loss / num_batches as f64) as f32;
         let perplexity = loss.exp();
-        let accuracy = if total_tokens == 0 {
+        let accuracy = if total_predictions == 0 {
             0.0
         } else {
-            total_correct as f64 / total_tokens as f64
+            total_correct as f64 / total_predictions as f64
         };
 
         Ok(EvaluationResult {
@@ -639,7 +543,7 @@ impl<B: Backend> SyncopateModel<B> {
             perplexity,
             accuracy,
             num_batches,
-            total_tokens,
+            total_predictions,
         })
     }
 }
@@ -648,8 +552,8 @@ impl<B> SyncopateModel<B>
 where
     B: AutodiffBackend,
 {
-    /// Trains this model directly on token sequences.
-    pub fn train_token_sequences(
+    /// Trains this model directly on action-ID sequences.
+    pub fn train_action_sequences(
         &mut self,
         sequences: &[Vec<u32>],
         training: &ModelTrainingConfig,
@@ -664,11 +568,11 @@ where
         let windows = TrainingWindows::from_sequences(
             sequences,
             self.config().seq_len,
-            training.pad_token_id,
+            training.pad_action_id,
         )?;
         if windows.is_empty() {
             return Err(Error::Training(
-                "training requires at least one sequence with two or more tokens".to_string(),
+                "training requires at least one sequence with two or more IDs".to_string(),
             ));
         }
 
@@ -745,288 +649,7 @@ where
             parameter_count: self.parameter_count(),
         })
     }
-
-    /// Trains this model on chat-style `(prompt, response)` token-ID pairs.
-    pub fn train_chat_sequences(
-        &mut self,
-        chat_pairs: &[(Vec<u32>, Vec<u32>)],
-        training: &ModelTrainingConfig,
-        device: &B::Device,
-        mut on_step: impl FnMut(usize, f32),
-    ) -> Result<ModelTrainingReport> {
-        if training.batch_size == 0 {
-            return Err(Error::Training(
-                "batch_size must be greater than zero".to_string(),
-            ));
-        }
-        let windows = TrainingWindows::from_chat_sequences(
-            chat_pairs,
-            self.config().seq_len,
-            training.pad_token_id,
-        )?;
-        if windows.is_empty() {
-            return Err(Error::Training(
-                "training requires at least one chat pair that produces two or more tokens"
-                    .to_string(),
-            ));
-        }
-
-        let mut optimizer_config =
-            AdamWConfig::new().with_weight_decay(training.weight_decay as f32);
-        if let Some(max_norm) = training.grad_clip_norm.filter(|value| *value > 0.0) {
-            optimizer_config = optimizer_config
-                .with_grad_clipping(Some(GradientClippingConfig::Norm(max_norm as f32)));
-        }
-        let mut optimizer = optimizer_config.init::<B, Self>();
-        let mut model = self.clone();
-        let mut final_loss = f32::NAN;
-        let mut best_loss = f32::MAX;
-        let mut best_loss_step: usize = 0;
-
-        let ckpt_dir = training.checkpoint_dir.as_deref().map(Path::new);
-        if let Some(dir) = &ckpt_dir {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                Error::Io(format!(
-                    "failed to create checkpoint directory {:?}: {}",
-                    dir, e
-                ))
-            })?;
-        }
-
-        for step in 0..training.steps {
-            let batch = windows.batch::<B>(step, training.batch_size, device)?;
-            let logits = model.forward(batch.inputs);
-            let loss = cross_entropy_loss_with_mask(logits, batch.targets, batch.loss_mask);
-            final_loss = tensor_scalar(loss.clone())?;
-            let grads = loss.backward();
-            let grads = GradientsParams::from_grads(grads, &model);
-            let lr = scheduled_learning_rate(training, step);
-            model = optimizer.step(lr, model, grads);
-
-            if final_loss < best_loss {
-                best_loss = final_loss;
-                best_loss_step = step;
-                if let Some(dir) = &ckpt_dir {
-                    let path = dir.join("best.mpk");
-                    model.save_parameters(&path)?;
-                }
-            }
-            if training.checkpoint_interval > 0
-                && (step + 1) % training.checkpoint_interval == 0
-                && let Some(dir) = &ckpt_dir
-            {
-                let path = dir.join(format!("step_{:06}.mpk", step + 1));
-                model.save_parameters(&path)?;
-            }
-
-            on_step(step, final_loss);
-        }
-
-        if training.steps == 0 {
-            let batch = windows.batch::<B>(0, training.batch_size, device)?;
-            final_loss = tensor_scalar(cross_entropy_loss_with_mask(
-                model.forward(batch.inputs),
-                batch.targets,
-                batch.loss_mask,
-            ))?;
-            best_loss = final_loss;
-            best_loss_step = 0;
-        }
-
-        *self = model;
-
-        Ok(ModelTrainingReport {
-            steps: training.steps,
-            final_loss,
-            best_loss,
-            best_loss_step,
-            training_window_count: windows.len(),
-            parameter_count: self.parameter_count(),
-        })
-    }
-
-    /// Like [`train_chat_sequences`](Self::train_chat_sequences) but also evaluates
-    /// on `val_sequences` every `eval_interval` steps and calls `on_eval`.
-    ///
-    /// Checkpoints: only `best_val.mpk` is saved (when val loss improves).
-    /// The final model is written back to `self` on return.
-    pub fn train_chat_sequences_with_val(
-        &mut self,
-        chat_pairs: &[(Vec<u32>, Vec<u32>)],
-        val_sequences: &[Vec<u32>],
-        eval_interval: usize,
-        training: &ModelTrainingConfig,
-        device: &B::Device,
-        mut on_step: impl FnMut(usize, f32, Option<f32>),
-    ) -> Result<ModelTrainingReport>
-    where
-        B: burn::tensor::backend::AutodiffBackend,
-        Self: burn::module::AutodiffModule<B, InnerModule = SyncopateModel<B::InnerBackend>>,
-    {
-        if training.batch_size == 0 {
-            return Err(Error::Training(
-                "batch_size must be greater than zero".to_string(),
-            ));
-        }
-        let windows = TrainingWindows::from_chat_sequences(
-            chat_pairs,
-            self.config().seq_len,
-            training.pad_token_id,
-        )?;
-        if windows.is_empty() {
-            return Err(Error::Training(
-                "training requires at least one chat pair that produces two or more tokens"
-                    .to_string(),
-            ));
-        }
-
-        // Build val eval windows once.
-        let val_windows = if eval_interval > 0 && !val_sequences.is_empty() {
-            Some(TrainingWindows::from_sequences(
-                val_sequences,
-                self.config().seq_len,
-                training.pad_token_id,
-            )?)
-        } else {
-            None
-        };
-
-        let mut optimizer_config =
-            AdamWConfig::new().with_weight_decay(training.weight_decay as f32);
-        if let Some(max_norm) = training.grad_clip_norm.filter(|v| *v > 0.0) {
-            optimizer_config = optimizer_config
-                .with_grad_clipping(Some(GradientClippingConfig::Norm(max_norm as f32)));
-        }
-        let mut optimizer = optimizer_config.init::<B, Self>();
-        let mut model = self.clone();
-        let mut final_loss = f32::NAN;
-        let mut best_loss = f32::MAX;
-        let mut best_loss_step: usize = 0;
-        let mut best_val_loss: f32 = f32::MAX;
-
-        let ckpt_dir = training.checkpoint_dir.as_deref().map(Path::new);
-        if let Some(dir) = &ckpt_dir {
-            std::fs::create_dir_all(dir).map_err(|e| {
-                Error::Io(format!(
-                    "failed to create checkpoint directory {:?}: {}",
-                    dir, e
-                ))
-            })?;
-        }
-
-        for step in 0..training.steps {
-            let batch = windows.batch::<B>(step, training.batch_size, device)?;
-            let logits = model.forward(batch.inputs);
-            let loss = cross_entropy_loss_with_mask(logits, batch.targets, batch.loss_mask);
-            final_loss = tensor_scalar(loss.clone())?;
-            let grads = loss.backward();
-            let grads = GradientsParams::from_grads(grads, &model);
-            let lr = scheduled_learning_rate(training, step);
-            model = optimizer.step(lr, model, grads);
-
-            if final_loss < best_loss {
-                best_loss = final_loss;
-                best_loss_step = step;
-            }
-
-            // Periodic validation evaluation.
-            let val_loss = if eval_interval > 0
-                && (step + 1) % eval_interval == 0
-                && let Some(ref vw) = val_windows
-            {
-                let vl = evaluate_windows_autodiff(&model, vw, training.batch_size, device)?;
-                let is_best = vl < best_val_loss;
-                if is_best {
-                    best_val_loss = vl;
-                    if let Some(dir) = &ckpt_dir {
-                        let path = dir.join("best_val.mpk");
-                        model.save_parameters(&path)?;
-                    }
-                }
-                Some(vl)
-            } else {
-                None
-            };
-
-            on_step(step, final_loss, val_loss);
-        }
-
-        if training.steps == 0 {
-            let batch = windows.batch::<B>(0, training.batch_size, device)?;
-            final_loss = tensor_scalar(cross_entropy_loss_with_mask(
-                model.forward(batch.inputs),
-                batch.targets,
-                batch.loss_mask,
-            ))?;
-            best_loss = final_loss;
-            best_loss_step = 0;
-        }
-
-        // Always save the final model.
-        if let Some(dir) = &ckpt_dir {
-            model.save_parameters(dir.join("latest.mpk"))?;
-        }
-
-        *self = model;
-
-        Ok(ModelTrainingReport {
-            steps: training.steps,
-            final_loss,
-            best_loss,
-            best_loss_step,
-            training_window_count: windows.len(),
-            parameter_count: self.parameter_count(),
-        })
-    }
 }
-
-/// Evaluates a non-autodiff model on pre-built windows and returns the
-/// average loss.
-fn evaluate_windows<B: Backend>(
-    model: &SyncopateModel<B>,
-    windows: &TrainingWindows,
-    batch_size: usize,
-    device: &B::Device,
-) -> Result<f32> {
-    let num_batches = windows.len().div_ceil(batch_size);
-    if num_batches == 0 {
-        return Ok(f32::NAN);
-    }
-    let mut total_loss = 0.0_f64;
-    for step in 0..num_batches {
-        let batch = windows.batch::<B>(step, batch_size, device)?;
-        let logits = model.forward(batch.inputs);
-        let loss = cross_entropy_loss_with_mask(logits, batch.targets, batch.loss_mask);
-        total_loss += tensor_scalar(loss)? as f64;
-    }
-    Ok((total_loss / num_batches as f64) as f32)
-}
-
-/// Evaluates an autodiff model by stripping the autodiff wrapper and
-/// delegating to [`evaluate_windows`].
-fn evaluate_windows_autodiff<B>(
-    model: &SyncopateModel<B>,
-    windows: &TrainingWindows,
-    batch_size: usize,
-    device: &B::Device,
-) -> Result<f32>
-where
-    B: burn::tensor::backend::AutodiffBackend,
-    SyncopateModel<B>:
-        burn::module::AutodiffModule<B, InnerModule = SyncopateModel<B::InnerBackend>>,
-{
-    let eval_model = burn::module::AutodiffModule::valid(model);
-    evaluate_windows(&eval_model, windows, batch_size, device)
-}
-
-impl<B: Backend> crate::lm::LanguageModel<B> for SyncopateModel<B> {
-    fn forward(&self, tokens: Tensor<B, 2, Int>) -> Tensor<B, 3> {
-        SyncopateModel::forward(self, tokens)
-    }
-}
-
-impl<B: Backend> crate::lm::TrainableLanguageModel<B> for SyncopateModel<B> {}
-
 impl<B: Backend> SyncopateBlock<B> {
     fn new(config: &SyncopateModelConfig, seed: &mut u64, device: &B::Device) -> Self {
         Self {
@@ -1220,13 +843,15 @@ pub fn cross_entropy_loss_with_mask<B: Backend>(
     loss_mask: Tensor<B, 2>,
 ) -> Tensor<B, 1> {
     let [batch, seq_len, vocab_size] = logits.dims();
-    let token_count = batch * seq_len;
-    let flat_logits = logits.reshape([token_count, vocab_size]);
-    let flat_targets = targets.reshape([token_count]);
-    let flat_mask = loss_mask.reshape([token_count]);
+    let position_count = batch * seq_len;
+    let flat_logits = logits.reshape([position_count, vocab_size]);
+    let flat_targets = targets.reshape([position_count]);
+    let flat_mask = loss_mask.reshape([position_count]);
     let log_probs = activation::log_softmax(flat_logits, 1);
     let target_probs = flat_targets.one_hot::<2>(vocab_size).float();
-    let picked = (log_probs * target_probs).sum_dim(1).reshape([token_count]);
+    let picked = (log_probs * target_probs)
+        .sum_dim(1)
+        .reshape([position_count]);
     let masked_nll = (picked.neg() * flat_mask.clone()).sum();
     let mask_sum = flat_mask.sum();
     let denom = mask_sum.add_scalar(EPS);
@@ -1325,8 +950,8 @@ fn scheduled_learning_rate(training: &ModelTrainingConfig, step: usize) -> f64 {
     min_lr + 0.5 * (max_lr - min_lr) * (1.0 + (PI64 * progress).cos())
 }
 
-fn context_window(context: &[u32], seq_len: usize, pad_token_id: u32) -> Vec<u32> {
-    let mut input = vec![pad_token_id; seq_len];
+fn context_window(context: &[u32], seq_len: usize, pad_action_id: u32) -> Vec<u32> {
+    let mut input = vec![pad_action_id; seq_len];
     let suffix = if context.len() > seq_len {
         &context[context.len() - seq_len..]
     } else {
@@ -1334,15 +959,6 @@ fn context_window(context: &[u32], seq_len: usize, pad_token_id: u32) -> Vec<u32
     };
     input[..suffix.len()].copy_from_slice(suffix);
     input
-}
-
-fn context_last_index(context: &[u32], seq_len: usize) -> Result<usize> {
-    if context.is_empty() {
-        return Err(Error::Inference(
-            "context must contain at least one token".to_string(),
-        ));
-    }
-    Ok(context.len().min(seq_len) - 1)
 }
 
 fn argmax(values: &[f32]) -> Result<usize> {
@@ -1364,13 +980,6 @@ fn tensor_scalar<B: Backend>(tensor: Tensor<B, 1>) -> Result<f32> {
         .ok_or_else(|| Error::Training("expected scalar tensor".to_string()))
 }
 
-fn tensor_to_vec<B: Backend>(tensor: Tensor<B, 1>) -> Result<Vec<f32>> {
-    tensor
-        .into_data()
-        .into_vec::<f32>()
-        .map_err(|err| Error::Inference(err.to_string()))
-}
-
 fn tensor_from_u32<B: Backend, const D: usize>(
     values: Vec<u32>,
     shape: [usize; D],
@@ -1380,7 +989,7 @@ fn tensor_from_u32<B: Backend, const D: usize>(
         .into_iter()
         .map(|value| {
             i32::try_from(value)
-                .map_err(|_| Error::Config(format!("token id {value} exceeds i32::MAX")))
+                .map_err(|_| Error::Config(format!("action id {value} exceeds i32::MAX")))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(Tensor::<B, D, Int>::from_data(
@@ -1409,67 +1018,7 @@ struct TrainingWindows {
 }
 
 impl TrainingWindows {
-    fn from_chat_sequences(
-        chat_pairs: &[(Vec<u32>, Vec<u32>)],
-        seq_len: usize,
-        pad_token_id: u32,
-    ) -> Result<Self> {
-        let mut windows = Vec::new();
-        for (prompt_ids, response_ids) in chat_pairs {
-            let mut full_seq = prompt_ids.clone();
-            full_seq.extend_from_slice(response_ids);
-
-            if full_seq.len() < 2 {
-                continue;
-            }
-
-            let prompt_len = prompt_ids.len();
-            let mut start = 0;
-            while start + 1 < full_seq.len() {
-                let end = (start + seq_len + 1).min(full_seq.len());
-                let chunk = &full_seq[start..end];
-                let prediction_count = chunk.len() - 1;
-
-                let mut inputs = vec![pad_token_id; seq_len];
-                let mut targets = vec![pad_token_id; seq_len];
-                let mut loss_mask = vec![0.0; seq_len];
-                inputs[..prediction_count].copy_from_slice(&chunk[..prediction_count]);
-                targets[..prediction_count].copy_from_slice(&chunk[1..]);
-
-                let mut has_unmasked = false;
-                for (i, mask) in loss_mask.iter_mut().enumerate().take(prediction_count) {
-                    let target_global_idx = start + i + 1;
-                    if target_global_idx >= prompt_len {
-                        *mask = 1.0;
-                        has_unmasked = true;
-                    }
-                }
-
-                if !has_unmasked {
-                    if end == full_seq.len() {
-                        break;
-                    }
-                    start += seq_len;
-                    continue;
-                }
-
-                windows.push(TrainingWindow {
-                    inputs,
-                    targets,
-                    loss_mask,
-                });
-
-                if end == full_seq.len() {
-                    break;
-                }
-                start += seq_len;
-            }
-        }
-
-        Ok(Self { windows, seq_len })
-    }
-
-    fn from_sequences(sequences: &[Vec<u32>], seq_len: usize, pad_token_id: u32) -> Result<Self> {
+    fn from_sequences(sequences: &[Vec<u32>], seq_len: usize, pad_action_id: u32) -> Result<Self> {
         let mut windows = Vec::new();
         for sequence in sequences {
             if sequence.len() < 2 {
@@ -1482,8 +1031,8 @@ impl TrainingWindows {
                 let chunk = &sequence[start..end];
                 let prediction_count = chunk.len() - 1;
 
-                let mut inputs = vec![pad_token_id; seq_len];
-                let mut targets = vec![pad_token_id; seq_len];
+                let mut inputs = vec![pad_action_id; seq_len];
+                let mut targets = vec![pad_action_id; seq_len];
                 let mut loss_mask = vec![0.0; seq_len];
                 inputs[..prediction_count].copy_from_slice(&chunk[..prediction_count]);
                 targets[..prediction_count].copy_from_slice(&chunk[1..]);
@@ -1518,7 +1067,7 @@ impl TrainingWindows {
         step: usize,
         batch_size: usize,
         device: &B::Device,
-    ) -> Result<TokenBatch<B>> {
+    ) -> Result<ActionBatch<B>> {
         let mut inputs = Vec::with_capacity(batch_size * self.seq_len);
         let mut targets = Vec::with_capacity(batch_size * self.seq_len);
         let mut loss_mask = Vec::with_capacity(batch_size * self.seq_len);
@@ -1531,7 +1080,7 @@ impl TrainingWindows {
             loss_mask.extend_from_slice(&window.loss_mask);
         }
 
-        Ok(TokenBatch {
+        Ok(ActionBatch {
             inputs: tensor_from_u32(inputs, [batch_size, self.seq_len], device)?,
             targets: tensor_from_u32(targets, [batch_size, self.seq_len], device)?,
             loss_mask: Tensor::<B, 2>::from_data(
@@ -1542,7 +1091,7 @@ impl TrainingWindows {
     }
 }
 
-struct TokenBatch<B: Backend> {
+struct ActionBatch<B: Backend> {
     inputs: Tensor<B, 2, Int>,
     targets: Tensor<B, 2, Int>,
     loss_mask: Tensor<B, 2>,
@@ -1563,9 +1112,9 @@ pub fn make_batch<B: Backend>(
     for batch in 0..batch_size {
         let offset = (step * 7 + batch * 13) % vocab_size;
         for pos in 0..seq_len {
-            let token = ((offset + pos) % vocab_size) as u32;
+            let action = ((offset + pos) % vocab_size) as u32;
             let next = ((offset + pos + 1) % vocab_size) as u32;
-            inputs.push(token);
+            inputs.push(action);
             targets.push(next);
         }
     }

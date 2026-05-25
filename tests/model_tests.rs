@@ -41,10 +41,9 @@ fn estimated_parameter_count_matches_burn_module_count() -> Result<()> {
 }
 
 #[test]
-fn preset_10m_uses_tiny_llama_style_dimensions() {
-    let config = SyncopateModelConfig::paper_10m(8192, 96);
+fn preset_10m_uses_expected_dimensions() {
+    let config = SyncopateModelConfig::preset_10m(8192, 96);
 
-    assert_eq!(config, SyncopateModelConfig::preset_10m(8192, 96));
     assert_eq!(config.layers, 10);
     assert_eq!(config.d_model, 256);
     assert_eq!(config.attention_heads, 8);
@@ -57,18 +56,18 @@ fn syncopate_model_forward_has_expected_shape() -> Result<()> {
     let device = Device::default();
     let config = SyncopateModelConfig::tiny_for_tests();
     let model = DefaultSyncopateModel::new(config.clone(), &device)?;
-    let tokens = Tensor::<DefaultAutodiffBackend, 2, Int>::from_data(
+    let action_ids = Tensor::<DefaultAutodiffBackend, 2, Int>::from_data(
         TensorData::new(vec![1i32, 2, 3, 4, 2, 3, 4, 5], [1, config.seq_len]),
         &device,
     );
 
-    let logits = model.forward(tokens);
+    let logits = model.forward(action_ids);
     assert_eq!(logits.dims(), [1, config.seq_len, config.vocab_size]);
     Ok(())
 }
 
 #[test]
-fn syncopate_model_can_train_and_infer_tokens() -> Result<()> {
+fn syncopate_model_can_train_action_sequences() -> Result<()> {
     let device = Device::default();
     let config = SyncopateModelConfig::tiny_for_tests();
     let mut model = DefaultSyncopateModel::new(config, &device)?;
@@ -80,12 +79,12 @@ fn syncopate_model_can_train_and_infer_tokens() -> Result<()> {
         warmup_steps: 1,
         weight_decay: 0.0,
         grad_clip_norm: Some(1.0),
-        pad_token_id: 0,
+        pad_action_id: 0,
         checkpoint_dir: None,
         checkpoint_interval: 0,
     };
 
-    let report = model.train_token_sequences(
+    let report = model.train_action_sequences(
         &[vec![1, 2, 3, 4, 5], vec![1, 2, 6, 7, 8]],
         &training,
         &device,
@@ -93,16 +92,11 @@ fn syncopate_model_can_train_and_infer_tokens() -> Result<()> {
     )?;
     assert_eq!(report.steps, 2);
     assert!(report.final_loss.is_finite());
-
-    let output = model.infer_tokens(
-        &[1, 2],
-        &ModelInferenceConfig {
-            max_new_tokens: 2,
-            pad_token_id: 0,
-        },
-        &device,
-    )?;
-    assert_eq!(output.token_ids.len(), 4);
+    let logits = model.forward_logits(&[1, 2], 0, &device)?;
+    assert_eq!(
+        logits.dims(),
+        [1, model.config().seq_len, model.config().vocab_size]
+    );
     Ok(())
 }
 
@@ -112,12 +106,12 @@ fn syncopate_model_supports_higher_order_attention() -> Result<()> {
     let config =
         SyncopateModelConfig::tiny_for_tests().with_attention_kernel(AttentionKernel::HigherOrder);
     let model = DefaultSyncopateModel::new(config.clone(), &device)?;
-    let tokens = Tensor::<DefaultAutodiffBackend, 2, Int>::from_data(
+    let action_ids = Tensor::<DefaultAutodiffBackend, 2, Int>::from_data(
         TensorData::new(vec![1i32, 2, 3, 4, 2, 3, 4, 5], [1, config.seq_len]),
         &device,
     );
 
-    let logits = model.forward(tokens);
+    let logits = model.forward(action_ids);
     assert_eq!(logits.dims(), [1, config.seq_len, config.vocab_size]);
     Ok(())
 }
