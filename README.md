@@ -1,97 +1,85 @@
-# syncopate-machine 🧠⚡
+# syncopate-machine ⚡
 
-Tiny Burn transformer that predicts **action IDs** — no tokenizer, no text gen, just vibes.
+Tiny Burn transformer for **Dancing With My Code** chat and his game. It predicts action IDs,
+then the website response graph turns those actions into short Thai/English
+messages and mood GIFs. Small brain, fast vibes.
 
 ```text
-user text → classifier (action + lang) → [action_id, lang_id, SEP] → 🔮 model predicts next actions → response graph writes the msg → mood GIF ✨
+user text -> website classifier -> [action_id, lang_id, SEP]
+          -> syncopate-machine -> next action IDs
+          -> response graph -> message + mood GIF
 ```
 
-## 🏗️ Model Architecture
+## Quick Start 🚀
 
-> 📊 Full architecture slides: [`slides.tex`](slides.tex) (Beamer, compile with `pdflatex`)
+Build the action data:
 
-| Setting            | Value                                |
-| ------------------ | ------------------------------------ |
-| Type               | Causal Transformer (GQA, kv_heads=1) |
-| Attention kernel   | **HigherOrder** (polynomial) 🔥       |
-| Layers             | 1                                    |
-| d_model            | 64                                   |
-| Attention heads    | 4                                    |
-| FFN (intermediate) | 64                                   |
-| Vocab              | 23 IDs                               |
-| Seq len            | 64                                   |
-| **Total params**   | **~24K** 🤏                          |
-
-> We tried Bahdanau (additive) attention — turns out transformers with GQA are just built different for tiny action-ID tasks. Fewer params, parallel training, no contest 🤷‍♂️
-
-## 🚀 Quick Start
-
-### 1. Prepare data
-
-```bash
+```powershell
 python examples\build_action_data.py --offline
 ```
 
-### 2. Train (CUDA only)
+Train on CUDA:
 
-```bash
-cargo run --release --features cuda --example train_action_model -- \
-  --steps 3000 --batch-size 32 --lr 0.003 --kernel higher-order --checkpoint-dir runs/action-model-v2
+```powershell
+cargo run --release --features cuda --example train_action_model -- `
+  --steps 3000 --batch-size 32 --lr 0.003 `
+  --checkpoint-dir runs/action-model
 ```
 
-Outputs in `runs/action-model-v2/`:
+Ship these into the website:
 
-- `final.mpk` — model weights
-- `model-config.json` — config for browser loading
-- `loss.csv` — training loss per step
-- `report.json` — full training report
-
-### 3. Inference (native Rust)
-
-```rust,no_run
-use syncopate_machine::prelude::*;
-
-let device = auto_device()?;
-let config = SyncopateModelConfig::preset_action(23, 64)
-    .with_attention_kernel(AttentionKernel::HigherOrder);
-let mut model = DefaultSyncopateModel::new(config, &device)?;
-model.load_parameters("runs/action-model-v2/final.mpk")?;
-
-// Forward pass: context_ids -> logits for the last position
-let logits = model.forward_logits(&[1, 5, 3, 9], 0, &device)?;  // [1, seq_len, 23]
+```text
+dancing-with-my-code-v2/assets/model-personal-v2.mpk
+dancing-with-my-code-v2/assets/model-config-personal-v2.json
 ```
 
-### 4. Inference (browser / WASM)
+## Model Vibe 🧠
 
-Load these assets into your WASM build:
+| Setting | Value |
+| --- | --- |
+| Task | causal action-sequence prediction |
+| Vocab | 23 action/lang/control IDs |
+| Sequence length | 64 |
+| Layers | 1 |
+| d_model | 64 |
+| Attention | causal scaled dot-product softmax |
+| Attention heads | 4 |
+| KV heads | 1 |
+| FFN | SwiGLU, width 64 |
+| Position encoding | RoPE |
+| Norm | RMSNorm |
+| Output projection | tied to embedding |
+| Params | 24,192 |
 
-- `model-personal-v2.mpk`
-- `model-config-personal-v2.json`
+## Current Checkpoint 💾
 
-```rust,ignore
-let mut runtime = BrowserRuntime::new();
-runtime.load_from_url_with_config_json(
-    "assets/model-personal-v2.mpk",
-    Some("assets/model-config-personal-v2.json"),
-    23, 64,
-    BrowserBackendPreference::Auto,
-).await?;
+The website uses:
 
-// Single step: returns Vec<f32> of length vocab_size
-let logits = runtime.step(&[1, 5, 3, 9]).await?;
+```text
+runs/action-model/final.mpk
 ```
 
-Works on WebGPU or CPU — auto-fallback if GPU is broken.
+Current validation metrics:
 
-### Attention Kernels
+| Metric | Value |
+| --- | --- |
+| Validation loss | 1.113533 |
+| Validation perplexity | 3.0451 |
+| Validation accuracy | 63.5349% |
 
-| Kernel | Normalization | Notes |
-|---|---|---|
-| `softmax` (default) | `softmax(QKᵀ / √d)` | standard, well-tested |
-| `higher-order` | `(W·Wᵀ · keep) / Σ|W·Wᵀ|` | polynomial, zero extra params |
+## Training Loss 📉
 
-Pass `--kernel higher-order` at train time to use it. The kernel is saved in `model-config.json` and loaded automatically by the browser runtime.
+![Training loss curve](docs/loss-action-model.png)
 
-## 🪪 LICENSE
+Raw loss is noisy because the batches are tiny. The pink line is an 80-step
+smooth, which shows the real shape: hard drop early, then slow grind.
 
-MIT. Break it, fix it, ship it 🚀
+## Browser Runtime 🌐
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` | try WebGPU, fall back to CPU |
+| `gpu` | require WebGPU |
+| `cpu` | force CPU/Flex backend |
+
+MIT. Break it, fix it, ship it. ✨

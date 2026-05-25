@@ -9,7 +9,7 @@
 //! method for ID-by-ID generation.
 //!
 
-use crate::model::{AttentionKernel, SyncopateModel, SyncopateModelConfig};
+use crate::model::{SyncopateModel, SyncopateModelConfig};
 use burn::{
     module::Module,
     record::{FullPrecisionSettings, NamedMpkBytesRecorder, Recorder},
@@ -482,8 +482,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Fetch a `config.json` produced by the training script and build a
-/// [`SyncopateModelConfig`] from it. Only the fields that differ from
-/// the 1M preset are applied (currently just `attention_kernel`).
+/// [`SyncopateModelConfig`] from it.
 async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{Request, RequestInit, window};
@@ -509,16 +508,6 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
     .map_err(|e| format!("read config text: {e:?}"))?;
     let text = text_js.as_string().unwrap_or_default();
 
-    // Parse only the attention_kernel field first; dimensions come from the
-    // full config below so tiny action models load with the exact train shape.
-    // Parse only the attention_kernel field first; dimensions come from the
-    // full config below so tiny action models load with the exact train shape.
-    let kernel = if text.contains("\"higher-order\"") {
-        AttentionKernel::HigherOrder
-    } else {
-        AttentionKernel::Softmax
-    };
-
     // Parse the full JSON and extract all model dimension fields.
     let json: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("parse config.json: {e}"))?;
@@ -539,8 +528,7 @@ async fn fetch_config_json(url: &str) -> Result<SyncopateModelConfig, String> {
         attention_heads,
         kv_heads,
         intermediate_size,
-    )
-    .with_attention_kernel(kernel))
+    ))
 }
 
 fn default_browser_config(vocab_size: usize, seq_len: usize) -> SyncopateModelConfig {

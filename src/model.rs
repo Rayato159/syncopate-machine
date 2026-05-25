@@ -22,9 +22,9 @@ const NEG_INF: f32 = -1.0e9;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AttentionKernel {
+    /// Standard causal scaled dot-product softmax attention.
     #[default]
     Softmax,
-    HigherOrder,
 }
 
 /// Decoder-only model configuration for syncopate-machine.
@@ -71,11 +71,6 @@ impl SyncopateModelConfig {
 
     pub fn preset_action(vocab_size: usize, seq_len: usize) -> Self {
         Self::from_dimensions(vocab_size, seq_len, 1, 64, 4, 1, 64)
-    }
-
-    pub fn with_attention_kernel(mut self, kernel: AttentionKernel) -> Self {
-        self.attention_kernel = kernel;
-        self
     }
 
     pub fn estimated_parameter_count(&self) -> usize {
@@ -264,8 +259,6 @@ struct CausalAttention<B: Backend> {
     kv_heads: usize,
     #[module(skip)]
     head_dim: usize,
-    #[module(skip)]
-    kernel: AttentionKernel,
     #[module(skip)]
     rope_theta: f32,
 }
@@ -606,7 +599,6 @@ impl<B: Backend> CausalAttention<B> {
             attention_heads: config.attention_heads,
             kv_heads: config.kv_heads,
             head_dim,
-            kernel: config.attention_kernel,
             rope_theta: config.rope_theta,
         }
     }
@@ -627,13 +619,8 @@ impl<B: Backend> CausalAttention<B> {
         let k = repeat_kv_heads(apply_rope(k, self.rope_theta), self.attention_heads);
         let v = repeat_kv_heads(v, self.attention_heads);
 
-        let scores = q
-            .matmul(k.swap_dims(2, 3))
-            .mul_scalar(1.0 / (self.head_dim as f32).sqrt());
-        let mixed = match self.kernel {
-            AttentionKernel::Softmax => softmax_attention(scores, v),
-            AttentionKernel::HigherOrder => higher_order_attention(scores, v),
-        };
+        let scores = q.matmul(k.swap_dims(2, 3));
+        let mixed = softmax_attention(scores, v, self.head_dim);
 
         let merged = mixed.swap_dims(1, 2).reshape([batch, seq_len, d_model]);
         linear3(merged, self.w_o.val())
@@ -663,24 +650,18 @@ impl<B: Backend> SwiGluFeedForward<B> {
     }
 }
 
-fn softmax_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tensor<B, 4> {
+fn softmax_attention<B: Backend>(
+    scores: Tensor<B, 4>,
+    v: Tensor<B, 4>,
+    head_dim: usize,
+) -> Tensor<B, 4> {
     let [batch, heads, seq_len, _] = scores.dims();
     let mask = causal_invalid_mask_tensor::<B>(seq_len, &scores.device())
         .unsqueeze::<4>()
         .expand([batch, heads, seq_len, seq_len]);
+    let scores = scores.mul_scalar(1.0 / (head_dim as f32).sqrt());
     let weights = activation::softmax(scores.mask_fill(mask, NEG_INF), 3);
     weights.matmul(v)
-}
-
-fn higher_order_attention<B: Backend>(scores: Tensor<B, 4>, v: Tensor<B, 4>) -> Tensor<B, 4> {
-    let [batch, heads, seq_len, _] = scores.dims();
-    let keep = causal_keep_tensor::<B>(seq_len, &scores.device())
-        .unsqueeze::<4>()
-        .expand([batch, heads, seq_len, seq_len]);
-    let w = scores * keep.clone();
-    let second = w.clone().matmul(w.swap_dims(2, 3)) * keep;
-    let norm = second.clone().abs().sum_dim(3).add_scalar(EPS);
-    second.matmul(v) / norm
 }
 
 fn apply_rope<B: Backend>(x: Tensor<B, 4>, theta: f32) -> Tensor<B, 4> {
@@ -773,18 +754,6 @@ fn causal_invalid_mask_tensor<B: Backend>(
     }
     Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
         .greater_elem(0.0)
-}
-
-fn causal_keep_tensor<B: Backend>(seq_len: usize, device: &B::Device) -> Tensor<B, 2> {
-    let mut distances = Vec::with_capacity(seq_len * seq_len);
-    for i in 0..seq_len {
-        for j in 0..seq_len {
-            distances.push(j as f32 - i as f32);
-        }
-    }
-    Tensor::<B, 2>::from_data(TensorData::new(distances, [seq_len, seq_len]), device)
-        .lower_equal_elem(0.0)
-        .float()
 }
 
 fn linear3<B: Backend>(x: Tensor<B, 3>, weight: Tensor<B, 2>) -> Tensor<B, 3> {

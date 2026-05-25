@@ -6,9 +6,10 @@
 
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{graphicx}
 \usepackage{tikz}
 \usepackage{xcolor}
-\usetikzlibrary{arrows.meta,positioning,fit}
+\usetikzlibrary{arrows.meta,positioning}
 
 \definecolor{attnblue}{RGB}{0,102,204}
 \definecolor{hotpink}{RGB}{255,38,142}
@@ -16,6 +17,7 @@
 \definecolor{mint}{RGB}{37,190,140}
 \definecolor{darkbg}{RGB}{29,36,45}
 \definecolor{lightbg}{RGB}{245,245,250}
+\newcommand{\code}[1]{{\normalfont\footnotesize #1}}
 
 \setbeamercolor{structure}{fg=attnblue}
 \setbeamercolor{frametitle}{bg=darkbg,fg=white}
@@ -34,7 +36,7 @@
       \normalfont\scriptsize syncopate-machine
     \end{beamercolorbox}%
     \begin{beamercolorbox}[wd=.34\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}
-      \normalfont\scriptsize action IDs, not tokenizer text
+      \normalfont\scriptsize softmax action model
     \end{beamercolorbox}%
     \begin{beamercolorbox}[wd=.33\paperwidth,ht=2.25ex,dp=1ex,right]{date in head/foot}
       \normalfont\scriptsize \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
@@ -43,9 +45,9 @@
 }
 
 \title[Syncopate-Machine]{Syncopate-Machine}
-\subtitle{Tiny Browser Transformer for Action-Sequence Chat}
+\subtitle{Tiny Softmax Transformer for Action-Sequence Chat}
 \author{Dancing With My Code}
-\date{Action-only architecture, 2026-05-25}
+\date{Softmax rollback, 2026-05-26}
 
 \begin{document}
 
@@ -55,11 +57,11 @@
 
 \section{Contract}
 
-\begin{frame}{The New Contract}
+\begin{frame}{The Contract}
   \begin{center}
   \begin{tikzpicture}[
     node distance=0.42cm,
-    box/.style={draw,rounded corners=3pt,minimum width=8.2cm,
+    box/.style={draw,rounded corners=3pt,minimum width=8.4cm,
       minimum height=0.58cm,align=center,font=\small},
     arr/.style={-{Stealth[length=5pt]},thick}
   ]
@@ -80,35 +82,29 @@
   \end{tikzpicture}
   \end{center}
 
-  \smallskip
-  \begin{block}{Hard rule}
-    \small
-    The model no longer predicts tokenizer pieces or raw words. It predicts
-    \alert{action IDs}. Text is owned by the website response graph.
-  \end{block}
+  \bigskip
+  The model does not generate words. It predicts conversation actions.
 \end{frame}
 
-\begin{frame}{Why The Tokenizer Got Fired}
+\begin{frame}{Action-ID Flow}
   \begin{columns}[T]
     \begin{column}{0.48\textwidth}
-      \begin{block}{Old Path}
+      \begin{block}{Input Side}
         \begin{itemize}
-          \item SentencePiece tokenizer
-          \item Text-token prediction
-          \item Browser had to decode words
-          \item More room for weird repeats
-          \item Bigger checkpoint and slower UI
+          \item Website classifies user text
+          \item Language is explicit: Thai or English
+          \item Model input is compact integer IDs
+          \item Context length stays at 64
         \end{itemize}
       \end{block}
     \end{column}
     \begin{column}{0.48\textwidth}
-      \begin{block}{New Path}
+      \begin{block}{Output Side}
         \begin{itemize}
-          \item No tokenizer at runtime
-          \item 23 integer action IDs
-          \item Website owns language and message style
-          \item Mood is explicit for animation
-          \item Tiny checkpoint, browser-friendly
+          \item Model predicts next action IDs
+          \item Response graph writes final words
+          \item Mood controls the mascot GIF
+          \item Chat stays short and punchy
         \end{itemize}
       \end{block}
     \end{column}
@@ -116,31 +112,29 @@
 
   \bigskip
   \centering
-  \alert{Less magic. More control. Fewer stupid browser failures.}
+  This is a tiny behavior brain for the website.
 \end{frame}
-
-\section{Vocabulary}
 
 \begin{frame}{Action Vocabulary}
   \small
   \centering
-  \begin{tabular}{rll@{\hspace{0.9cm}}rll}
+  \begin{tabular}{rll@{\qquad}rll}
     \toprule
-    \textbf{ID} & \textbf{Name} & \textbf{Role}
-      & \textbf{ID} & \textbf{Name} & \textbf{Role} \\
+    \textbf{ID} & \textbf{Action} & \textbf{Role}
+      & \textbf{ID} & \textbf{Action} & \textbf{Role} \\
     \midrule
-     0 & PAD & padding       & 12 & Compliment & nice input \\
-     1 & SOS & start         & 13 & Agree & yes / same \\
-     2 & EOS & end           & 14 & Disagree & no / wrong \\
-     3 & SEP & separator     & 15 & General & fallback \\
-     4 & Unknown & unused fallback & 16 & Eating & food talk \\
-     5 & Greeting & hello    & 17 & DailyLife & casual life \\
-     6 & Farewell & goodbye  & 18 & RustGo & Rust beats Go \\
-     7 & Frustrated & annoyed & 19 & Identity & who am I \\
-     8 & Sad & low mood      & 20 & ShitTalk & roast mode \\
-     9 & Happy & upbeat      & 21 & TH & Thai \\
-    10 & Question & question  & 22 & EN & English \\
-    11 & Insult & user swears &    &    & \\
+     0 & Start & sequence start     & 12 & GoRust & Rust beats Go \\
+     1 & End & sequence end         & 13 & RustWin & Rust wins again \\
+     2 & Greeting & hello             & 14 & GoBully & roast Go \\
+     3 & ReplyGreeting & hello back  & 15 & WhoMe & identity \\
+     4 & Eat & food topic            & 16 & AboutCreator & about Lookhin/site \\
+     5 & DailyLife & normal chat     & 17 & PissOff & clap back \\
+     6 & AskBack & keep talking      & 18 & CalmDown & de-escalate \\
+     7 & Joke & quick joke           & 19 & Farewell & goodbye only \\
+     8 & Roast & playful insult      & 20 & Normal & neutral mood \\
+     9 & Happy & happy mood          & 21 & TH & Thai \\
+    10 & Question & question         & 22 & EN & English \\
+    11 & Insult & user swears        &    &    & \\
     \bottomrule
   \end{tabular}
 \end{frame}
@@ -169,7 +163,7 @@
       \begin{block}{Decoder Block}
         \begin{itemize}
           \item RMSNorm
-          \item Causal attention (\alert{HigherOrder} polynomial kernel)
+          \item Causal scaled dot-product softmax
           \item RoPE position rotation
           \item Grouped-query attention
           \item SwiGLU feed-forward
@@ -183,6 +177,33 @@
   \centering
   The neural model decides \alert{what kind of reply happens next};
   the website decides \alert{what words hit the chat box}.
+\end{frame}
+
+\begin{frame}{Softmax Attention}
+  \[
+    A = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right),
+    \qquad O = AV
+  \]
+
+  \begin{itemize}
+    \item This is the only active attention path now.
+    \item For this tiny model, softmax is faster/saner in practice.
+    \item The checkpoint with the best measured validation accuracy is softmax.
+    \item GQA keeps the browser checkpoint compact.
+  \end{itemize}
+
+  \bigskip
+  \centering
+  Boring math, useful model. Ship it.
+\end{frame}
+
+\begin{frame}{Training Loss Curve}
+  \centering
+  \includegraphics[height=0.66\textheight,keepaspectratio]{docs/loss-action-model.png}
+
+  \vspace{0.15cm}
+  \small
+  Raw CUDA training loss with 80-step smoothing from \code{runs/action-model/loss.csv}.
 \end{frame}
 
 \begin{frame}{Parameter Count}
@@ -210,196 +231,89 @@
   Output projection reuses the embedding matrix, so it adds zero new params.
 \end{frame}
 
-\begin{frame}{Attention Kernels}
-  \begin{columns}[T]
-    \begin{column}{0.48\textwidth}
-      \begin{block}{Softmax (default)}
-        \[
-          w = \texttt{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} \cdot M\right)
-        \]
-        \begin{itemize}
-          \item Standard scaled dot-product
-          \item $\exp$ / $\sum$ normalization
-          \item Well-studied, universally used
-        \end{itemize}
-      \end{block}
-    \end{column}
-    \begin{column}{0.48\textwidth}
-      \begin{block}{\alert{HigherOrder} (active)}
-        \[
-          W = S \cdot K,\quad w = \frac{W W^\top \cdot K}{\sum|W W^\top|}
-        \]
-        \begin{itemize}
-          \item Second-order polynomial kernel
-          \item No $\exp$ — cheaper on weak GPUs
-          \item \alert{Zero extra parameters}
-        \end{itemize}
-      \end{block}
-    \end{column}
-  \end{columns}
+\section{Training}
 
-  \bigskip
+\begin{frame}{Current Checkpoint}
+  \small
   \centering
-  $S$ = raw scores, $K$ = causal keep mask. Switch with \texttt{-{}-kernel} at train time.
-\end{frame}
-
-\section{Architecture Decision}
-
-\begin{frame}{Why Not Bahdanau Attention?}
-  \begin{columns}[T]
-    \begin{column}{0.48\textwidth}
-      \begin{block}{Bahdanau + GRU}
-        \begin{itemize}
-          \item Single-head additive attention
-          \item Sequential decoding (step by step)
-          \item GRU gates: $3 \times$ (input + hidden + bias)
-          \item 1 GRU layer $\approx$ 2 transformer layers
-          \item 1-layer $\approx$ 72K, 2-layer bi $\approx$ 291K params
-          \item Training 2–3$\times$ slower
-        \end{itemize}
-      \end{block}
-    \end{column}
-    \begin{column}{0.48\textwidth}
-      \begin{block}{Transformer + GQA (chosen)}
-        \begin{itemize}
-          \item Multi-head attention
-          \item Parallel over all positions
-          \item GQA \texttt{kv\_heads=1} is a cheat code
-          \item K,V projections: $64 \times 16 = 1{,}024$ each
-          \item \alert{24K params} for the full model
-          \item Training $\sim$41 steps/s
-        \end{itemize}
-      \end{block}
-    \end{column}
-  \end{columns}
-
-  \bigskip
-  \centering
-  Bahdanau shines for large seq2seq (translation). \alert{For tiny action-ID tasks, the transformer wins.}
-\end{frame}
-
-\begin{frame}{71K $\to$ 24K ($-66\%$)}
-  \centering
-  \begin{tabular}{lrr}
+  \begin{tabular}{lr}
     \toprule
-    \textbf{Setting} & \textbf{Before} & \textbf{After} \\
+    \textbf{Metric} & \textbf{Value} \\
     \midrule
-    Layers & 2 & 1 \\
-    FFN intermediate & 128 & 64 \\
-    Total params & 71,192 & 24,192 \\
-    Val accuracy & --- & 63.2\% \\
-    Perplexity & --- & 3.03 \\
-    Training speed & --- & $\sim$41 steps/s \\
+    Checkpoint & \code{runs/action-model/final.mpk} \\
+    Params & 24,192 \\
+    Validation loss & 1.113533 \\
+    Validation perplexity & 3.0451 \\
+    Validation accuracy & \alert{63.5349\%} \\
     \bottomrule
   \end{tabular}
 
   \bigskip
-  \begin{block}{What changed}
-    Halved decoder layers from 2~$\to$~1 and FFN width from 128~$\to$~64.
-    Removed dead code: \texttt{SyncopateParameterBudget} enum,
-    legacy preset methods.
-    Active attention kernel: \alert{HigherOrder} (polynomial normalization,
-    zero extra params vs Softmax).
-    4 tests remain, all passing.
-  \end{block}
-\end{frame}
-
-\begin{frame}{Browser Runtime}
-  \begin{itemize}
-    \item Website loads \texttt{model-personal-v2.mpk}
-    \item Website loads \texttt{model-config-personal-v2.json}
-    \item Runtime tries WebGPU first when requested
-    \item Auto mode falls back to CPU when WebGPU is unavailable
-    \item Chrome without a valid WebGPU adapter should not kill the chat box
-    \item UI streams message text from graph output, not raw model tokens
-  \end{itemize}
-
-  \bigskip
-  \begin{block}{Mood Contract}
-    Model output action sequence maps to one mood:
-    \texttt{normal}, \texttt{happy}, \texttt{frustrated}, or \texttt{sad}.
-    The mascot GIF changes from that mood.
+  \begin{block}{Website Asset}
+    This checkpoint is copied to \code{dancing-with-my-code-v2/assets/model-personal-v2.mpk}.
   \end{block}
 \end{frame}
 
 \begin{frame}{Training Path}
   \begin{block}{Data Build}
-    \texttt{python examples/build\_action\_data.py --offline}
+    \code{python examples/build\_action\_data.py --offline}
   \end{block}
 
   \begin{block}{CUDA Training}
     \small
-    \texttt{cargo run --release --features cuda --example train\_action\_model --}\\
-    \texttt{\quad --steps 3000 --batch-size 32 --lr 0.003}\\
-    \texttt{\quad --kernel higher-order}\\
-    \texttt{\quad --checkpoint-dir runs/action-higher-order}
+    \code{cargo run --release --features cuda --example train\_action\_model --}\\
+    \code{\quad --steps 3000 --batch-size 32 --lr 0.003}\\
+    \code{\quad --checkpoint-dir runs/action-model}
   \end{block}
 
   \begin{itemize}
     \item Training is CUDA-only by design.
     \item Website runtime can choose WebGPU or CPU.
-    \item Training data is action sequences, not text-token corpora.
+    \item Training data is compact action-ID sequences.
   \end{itemize}
 \end{frame}
 
-\section{Cleanup}
+\section{Website}
 
-\begin{frame}{What Got Deleted}
-  \begin{columns}[T]
-    \begin{column}{0.48\textwidth}
-      \begin{block}{Removed Code}
-        \begin{itemize}
-          \item \texttt{ChatModel}
-          \item \texttt{Trainer}
-          \item \texttt{infer\_tokens*}
-          \item old token generation APIs
-          \item legacy layout engine
-          \item old Multiscreen modules
-        \end{itemize}
-      \end{block}
-    \end{column}
-    \begin{column}{0.48\textwidth}
-      \begin{block}{Removed Junk}
-        \begin{itemize}
-          \item SentencePiece experiment folder
-          \item \texttt{spm\_train.exe}
-          \item dead tokenizer examples
-          \item obsolete tests
-          \item stray ignored \texttt{nul} file
-        \end{itemize}
-      \end{block}
-    \end{column}
-  \end{columns}
+\begin{frame}{Browser Runtime}
+  \begin{itemize}
+    \item Website loads \code{model-personal-v2.mpk}
+    \item Website loads \code{model-config-personal-v2.json}
+    \item Runtime tries WebGPU first when requested
+    \item Auto mode falls back to CPU when WebGPU is unavailable
+    \item Chrome without a valid WebGPU adapter should not kill the chat box
+    \item UI streams message text from the response graph
+  \end{itemize}
 
   \bigskip
-  \centering
-  Remaining crate surface: \alert{action model + training + browser runtime}.
+  \begin{block}{Mood Contract}
+    Model output action sequence maps to one mood:
+    \code{normal}, \code{happy}, \code{frustrated}, or \code{sad}.
+    The mascot GIF changes from that mood.
+  \end{block}
 \end{frame}
 
 \begin{frame}{Deploy Shape}
   \begin{itemize}
-    \item Build the Leptos site with \texttt{trunk build --release}
-    \item Ship the generated \texttt{dist/} directory to Vercel
-    \item Keep model assets in \texttt{dancing-with-my-code-v2/assets/}
-    \item Cache \texttt{.mpk} and \texttt{.json} assets aggressively
-    \item Do not ship old tokenizer artifacts
+    \item Build the Leptos site with \code{trunk build --release}
+    \item Ship the generated \code{dist/} directory to Vercel
+    \item Keep model assets in \code{dancing-with-my-code-v2/assets/}
+    \item Cache \code{.mpk} and \code{.json} assets aggressively
   \end{itemize}
 
   \bigskip
   \begin{block}{Final State}
-    The website talks like Dancing With My Code. The model only nudges
-    conversation flow by action IDs. Clean split, less nonsense.
+    Softmax drives the tiny action model. The website owns the voice.
   \end{block}
 \end{frame}
 
 \begin{frame}{References}
   \begin{itemize}
-    \item Burn framework: \texttt{https://github.com/tracel-ai/burn}
-    \item Bahdanau et al.\ (2014): Neural Machine Translation by Jointly Learning to Align and Translate
+    \item Burn framework: \code{https://github.com/tracel-ai/burn}
     \item RoPE / RoFormer: rotary position embeddings
     \item GQA: grouped-query attention
     \item SwiGLU: gated feed-forward block
-    \item Project docs: \texttt{README.md} and \texttt{DEVLOG.md}
+    \item Project docs: \code{README.md} and \code{DEVLOG.md}
   \end{itemize}
 \end{frame}
 

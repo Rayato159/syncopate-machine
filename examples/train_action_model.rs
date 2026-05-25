@@ -46,10 +46,6 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     seq_len: usize,
 
-    /// Attention kernel: softmax or higher-order.
-    #[arg(long, default_value = "softmax")]
-    kernel: String,
-
     /// Directory for checkpoints and config output.
     #[arg(long, default_value = "runs/action-model")]
     checkpoint_dir: PathBuf,
@@ -127,14 +123,8 @@ fn main() -> Result<()> {
     println!("  {} validation sequences", val_seqs.len());
 
     // --- Build model config ---
-    let kernel = match args.kernel.to_ascii_lowercase().as_str() {
-        "softmax" => AttentionKernel::Softmax,
-        "higher-order" | "higher_order" | "higherorder" | "ho" => AttentionKernel::HigherOrder,
-        other => bail!("unknown kernel '{other}', expected 'softmax' or 'higher-order'"),
-    };
-    let config = SyncopateModelConfig::preset_action(ACTION_VOCAB_SIZE, args.seq_len)
-        .with_attention_kernel(kernel);
-    println!("kernel: {:?}", kernel);
+    let config = SyncopateModelConfig::preset_action(ACTION_VOCAB_SIZE, args.seq_len);
+    println!("kernel: Softmax");
     let param_count = config.estimated_parameter_count();
     println!(
         "model: {param_count} params, vocab={}, seq_len={}",
@@ -175,7 +165,7 @@ fn main() -> Result<()> {
         weight_decay: 0.01,
         grad_clip_norm: Some(1.0),
         pad_action_id: 0,
-        checkpoint_dir: None,
+        checkpoint_dir: Some(args.checkpoint_dir.to_string_lossy().to_string()),
         checkpoint_interval: 0,
     };
 
