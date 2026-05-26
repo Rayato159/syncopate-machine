@@ -36,7 +36,7 @@
       \normalfont\scriptsize syncopate-machine
     \end{beamercolorbox}%
     \begin{beamercolorbox}[wd=.34\paperwidth,ht=2.25ex,dp=1ex,center]{title in head/foot}
-      \normalfont\scriptsize softmax action model
+      \normalfont\scriptsize v0.4.0 action model
     \end{beamercolorbox}%
     \begin{beamercolorbox}[wd=.33\paperwidth,ht=2.25ex,dp=1ex,right]{date in head/foot}
       \normalfont\scriptsize \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
@@ -45,9 +45,9 @@
 }
 
 \title[Syncopate-Machine]{Syncopate-Machine}
-\subtitle{Tiny Softmax Transformer for Action-Sequence Chat}
+\subtitle{Simplified 15-Token Vocabulary for Action-Sequence Chat}
 \author{Dancing With My Code}
-\date{Softmax rollback, 2026-05-26}
+\date{2026-05-26}
 
 \begin{document}
 
@@ -94,7 +94,7 @@
           \item Website classifies user text
           \item Language is explicit: Thai or English
           \item Model input is compact integer IDs
-          \item Context length stays at 64
+          \item Context length stays at 16
         \end{itemize}
       \end{block}
     \end{column}
@@ -123,18 +123,14 @@
     \textbf{ID} & \textbf{Action} & \textbf{Role}
       & \textbf{ID} & \textbf{Action} & \textbf{Role} \\
     \midrule
-     0 & PAD & padding            & 12 & Compliment & nice input \\
-     1 & SOS & sequence start     & 13 & Agree & yes / same \\
-     2 & EOS & sequence end       & 14 & Disagree & no / wrong \\
-     3 & SEP & separator          & 15 & General & fallback \\
-     4 & Unknown & unused fallback & 16 & Eating & food talk \\
-     5 & Greeting & hello          & 17 & DailyLife & casual life \\
-     6 & Farewell & goodbye        & 18 & RustGo & Rust beats Go \\
-     7 & Frustrated & annoyed      & 19 & Identity & who am I \\
-     8 & Sad & low mood           & 20 & ShitTalk & roast mode \\
-     9 & Happy & upbeat           & 21 & TH & Thai \\
-    10 & Question & question       & 22 & EN & English \\
-    11 & Insult & user swears      &    &    & \\
+     0 & PAD & padding            &  8 & Programming & Rust beats Go/PHP \\
+     1 & SOS & sequence start     &  9 & Identity & who am I / creator \\
+     2 & EOS & sequence end       & 10 & Resume & redirect to /resume \\
+     3 & SEP & separator          & 11 & Links & redirect to homepage \\
+     4 & Unknown & don't understand & 12 & Course & redirect to Udemy Rust course \\
+     5 & Greeting & hello          & 13 & TH & Thai language \\
+     6 & Farewell & goodbye        & 14 & EN & English language \\
+     7 & Insult & roast / bully    &    &    & \\
     \bottomrule
   \end{tabular}
 \end{frame}
@@ -147,14 +143,14 @@
       \begin{block}{Browser Model}
         \begin{tabular}{lr}
           \toprule
-          Vocab & 23 \\
-          Context & 64 \\
+          Vocab & 15 \\
+          Context & 16 \\
           Layers & 1 \\
-          Width & 64 \\
+          Width & 16 \\
           Attention heads & 4 \\
           KV heads & 1 \\
-          FFN width & 64 \\
-          Params & 24,192 \\
+          FFN width & 16 \\
+          Params & 1,696 \\
           \bottomrule
         \end{tabular}
       \end{block}
@@ -203,13 +199,13 @@
 
   \vspace{0.15cm}
   \small
-  Raw CUDA training loss with 80-step smoothing from \code{runs/action-model/loss.csv}.
+  Raw CUDA training loss with 80-step smoothing from \code{runs/action-v4-d16-clean/loss.csv}.
 \end{frame}
 
 \begin{frame}{Parameter Count}
   \small
-  Config: $V=23$, $N=1$, $d=64$, $n_h=4$, $n_{kv}=1$, $d_k=16$,
-  $d_{ff}=64$
+  Config: $V=15$, $N=1$, $d=16$, $n_h=4$, $n_{kv}=1$, $d_k=4$,
+  $d_{ff}=16$
 
   \medskip
   \centering
@@ -217,13 +213,13 @@
     \toprule
     \textbf{Component} & \textbf{Formula} & \textbf{Params} \\
     \midrule
-    Embedding & $V \times d = 23 \times 64$ & 1,472 \\
-    Attention per layer & $d^2 + 2dn_{kv}d_k + d^2$ & 10,240 \\
-    FFN per layer (SwiGLU) & $3dd_{ff}$ & 12,288 \\
-    Norms per layer & $2d$ & 128 \\
-    Final norm & $d$ & 64 \\
+    Embedding & $V \times d = 15 \times 16$ & 240 \\
+    Attention per layer & $d^2 + 2dn_{kv}d_k + d^2$ & 640 \\
+    FFN per layer (SwiGLU) & $3dd_{ff}$ & 768 \\
+    Norms per layer & $2d$ & 32 \\
+    Final norm & $d$ & 16 \\
     \midrule
-    Total & $1472 + 1(10240 + 12288 + 128) + 64$ & \alert{24,192} \\
+    Total & $240 + 1(640 + 768 + 32) + 16$ & \alert{1,696} \\
     \bottomrule
   \end{tabular}
 
@@ -240,11 +236,11 @@
     \toprule
     \textbf{Metric} & \textbf{Value} \\
     \midrule
-    Checkpoint & \code{runs/action-model/final.mpk} \\
-    Params & 24,192 \\
-    Validation loss & 1.113533 \\
-    Validation perplexity & 3.0451 \\
-    Validation accuracy & \alert{63.5349\%} \\
+    Checkpoint & \code{runs/action-v4-d16-clean/final.mpk} \\
+    Params & 1,696 \\
+    Validation loss & 0.6742 \\
+    Validation perplexity & 1.96 \\
+    Validation accuracy & \alert{71.15\%} \\
     \bottomrule
   \end{tabular}
 
@@ -262,8 +258,8 @@
   \begin{block}{CUDA Training}
     \small
     \code{cargo run --release --features cuda --example train\_action\_model --}\\
-    \code{\quad --steps 3000 --batch-size 32 --lr 0.003}\\
-    \code{\quad --checkpoint-dir runs/action-model}
+    \code{\quad --steps 20000 --batch-size 64 --lr 0.003}\\
+    \code{\quad --checkpoint-dir runs/action-v4-d16-clean}
   \end{block}
 
   \begin{itemize}

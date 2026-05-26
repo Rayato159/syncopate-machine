@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use syncopate_machine::prelude::*;
 
-const ACTION_VOCAB_SIZE: usize = 23;
+const ACTION_VOCAB_SIZE: usize = 15;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -43,7 +43,7 @@ struct Args {
     lr: f64,
 
     /// Sequence length.
-    #[arg(long, default_value_t = 64)]
+    #[arg(long, default_value_t = 16)]
     seq_len: usize,
 
     /// Directory for checkpoints and config output.

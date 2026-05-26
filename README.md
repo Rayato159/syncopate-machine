@@ -22,8 +22,8 @@ Train on CUDA:
 
 ```powershell
 cargo run --release --features cuda --example train_action_model -- `
-  --steps 3000 --batch-size 32 --lr 0.003 `
-  --checkpoint-dir runs/action-model
+  --steps 20000 --batch-size 64 --lr 0.003 `
+  --checkpoint-dir runs/action-v4-d16-clean
 ```
 
 Ship these into the website:
@@ -33,39 +33,61 @@ dancing-with-my-code-v2/assets/model-personal-v2.mpk
 dancing-with-my-code-v2/assets/model-config-personal-v2.json
 ```
 
+## Action Vocabulary 📝
+
+15 tokens — control codes, action intents, and language tags:
+
+| ID | Token | Role |
+| --- | --- | --- |
+| 0 | `PAD` | padding |
+| 1 | `SOS` | start of sequence |
+| 2 | `EOS` | end of sequence |
+| 3 | `SEP` | separator |
+| 4 | `Unknown` | unclassified input |
+| 5 | `Greeting` | สวัสดี / hello vibes |
+| 6 | `Farewell` | บ๊ายบาย / goodbye |
+| 7 | `Insult` | ด่า / roast mode |
+| 8 | `Programming` | code talk |
+| 9 | `Identity` | who am I? |
+| 10 | `Resume` | แนะนำตัว / intro |
+| 11 | `Links` | link drops |
+| 12 | `Course` | course info |
+| 13 | `TH` | Thai language tag |
+| 14 | `EN` | English language tag |
+
 ## Model Vibe 🧠
 
 | Setting | Value |
 | --- | --- |
 | Task | causal action-sequence prediction |
-| Vocab | 23 action/lang/control IDs |
-| Sequence length | 64 |
+| Vocab | 15 action/lang/control IDs |
+| Sequence length | 16 |
 | Layers | 1 |
-| d_model | 64 |
+| d_model | 16 |
 | Attention | causal scaled dot-product softmax |
 | Attention heads | 4 |
 | KV heads | 1 |
-| FFN | SwiGLU, width 64 |
+| FFN | SwiGLU, width 16 |
 | Position encoding | RoPE |
 | Norm | RMSNorm |
 | Output projection | tied to embedding |
-| Params | 24,192 |
+| Params | 1,696 |
 
 ## Current Checkpoint 💾
 
 The website uses:
 
 ```text
-runs/action-model/final.mpk
+runs/action-v4-d16-clean/final.mpk
 ```
 
 Current validation metrics:
 
 | Metric | Value |
 | --- | --- |
-| Validation loss | 1.113533 |
-| Validation perplexity | 3.0451 |
-| Validation accuracy | 63.5349% |
+| Validation loss | 0.6742 |
+| Validation perplexity | 1.96 |
+| Validation accuracy | 71.15% |
 
 ## Training Loss 📉
 

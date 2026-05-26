@@ -3,10 +3,7 @@
 The model never sees raw text. The website classifies user text into an input
 Action + language, then this model predicts output Action IDs.
 
-HF datasets used as style/topic references, not copied into the repo:
-  - li2017dailydialog/daily_dialog: English daily-life conversation shape.
-  - pythainlp/oasst2_thai_top1_chat_format: Thai chat-format examples.
-  - ZombitX64/ThaiChatbotConversation: Thai chatbot conversation coverage.
+Simplified vocabulary (v4): 15 tokens, 9 output actions.
 """
 
 from __future__ import annotations
@@ -27,42 +24,27 @@ SEP = 3
 UNKNOWN = 4
 GREETING = 5
 FAREWELL = 6
-FRUSTRATED = 7
-SAD = 8
-HAPPY = 9
-QUESTION = 10
-INSULT = 11
-COMPLIMENT = 12
-AGREE = 13
-DISAGREE = 14
-GENERAL = 15
-EATING = 16
-DAILY_LIFE = 17
-RUST_GO = 18
-IDENTITY = 19
-SHIT_TALK = 20
+INSULT = 7
+PROGRAMMING = 8
+IDENTITY = 9
+RESUME = 10
+LINKS = 11
+COURSE = 12
 
-LANG_TH = 21
-LANG_EN = 22
-VOCAB_SIZE = 23
+LANG_TH = 13
+LANG_EN = 14
+VOCAB_SIZE = 15
 
 ALL_OUTPUT_ACTIONS = [
     GREETING,
     FAREWELL,
-    FRUSTRATED,
-    SAD,
-    HAPPY,
-    QUESTION,
     INSULT,
-    COMPLIMENT,
-    AGREE,
-    DISAGREE,
-    GENERAL,
-    EATING,
-    DAILY_LIFE,
-    RUST_GO,
+    PROGRAMMING,
     IDENTITY,
-    SHIT_TALK,
+    RESUME,
+    LINKS,
+    COURSE,
+    UNKNOWN,
 ]
 
 NON_FAREWELL_ACTIONS = [a for a in ALL_OUTPUT_ACTIONS if a != FAREWELL]
@@ -73,131 +55,109 @@ NON_FAREWELL_ACTIONS = [a for a in ALL_OUTPUT_ACTIONS if a != FAREWELL]
 
 BASE_PATTERNS: dict[int, list[list[int]]] = {
     GREETING: [
-        [GREETING, DAILY_LIFE, EOS],
-        [GREETING, EATING, EOS],
-        [GREETING, QUESTION, EOS],
-        [GREETING, SHIT_TALK, EOS],
-        [GREETING, DAILY_LIFE, QUESTION, EOS],
+        [GREETING, EOS],
+        [GREETING, INSULT, EOS],
+        [GREETING, PROGRAMMING, EOS],
+        [GREETING, IDENTITY, EOS],
+        [GREETING, LINKS, EOS],
+        [GREETING, RESUME, EOS],
+        [GREETING, COURSE, EOS],
+        [GREETING, UNKNOWN, EOS],
+        [GREETING, IDENTITY, PROGRAMMING, EOS],
     ],
     FAREWELL: [
         [FAREWELL, EOS],
-        [FAREWELL, HAPPY, EOS],
-        [GENERAL, FAREWELL, EOS],
-    ],
-    FRUSTRATED: [
-        [FRUSTRATED, DAILY_LIFE, EOS],
-        [FRUSTRATED, QUESTION, EOS],
-        [FRUSTRATED, SHIT_TALK, EOS],
-        [SHIT_TALK, FRUSTRATED, EOS],
-    ],
-    SAD: [
-        [SAD, DAILY_LIFE, EOS],
-        [SAD, EATING, EOS],
-        [SAD, QUESTION, EOS],
-        [SAD, HAPPY, EOS],
-    ],
-    HAPPY: [
-        [HAPPY, COMPLIMENT, EOS],
-        [HAPPY, DAILY_LIFE, EOS],
-        [HAPPY, RUST_GO, EOS],
-        [HAPPY, SHIT_TALK, EOS],
-    ],
-    QUESTION: [
-        [QUESTION, GENERAL, EOS],
-        [QUESTION, DAILY_LIFE, EOS],
-        [QUESTION, QUESTION, EOS],
-        [GENERAL, QUESTION, EOS],
+        [GREETING, FAREWELL, EOS],
+        [FAREWELL, GREETING, EOS],
     ],
     INSULT: [
-        [INSULT, SHIT_TALK, EOS],
-        [FRUSTRATED, INSULT, EOS],
-        [SHIT_TALK, INSULT, EOS],
-        [INSULT, EATING, EOS],
-        [INSULT, FRUSTRATED, SHIT_TALK, EOS],
+        [INSULT, INSULT, EOS],
+        [INSULT, PROGRAMMING, EOS],
+        [INSULT, IDENTITY, EOS],
+        [INSULT, UNKNOWN, EOS],
+        [INSULT, INSULT, PROGRAMMING, EOS],
+        [INSULT, INSULT, INSULT, EOS],
+        [INSULT, LINKS, EOS],
     ],
-    COMPLIMENT: [
-        [COMPLIMENT, HAPPY, EOS],
-        [HAPPY, COMPLIMENT, EOS],
-        [COMPLIMENT, SHIT_TALK, EOS],
-    ],
-    AGREE: [
-        [AGREE, GENERAL, EOS],
-        [AGREE, DAILY_LIFE, EOS],
-        [AGREE, HAPPY, EOS],
-    ],
-    DISAGREE: [
-        [DISAGREE, QUESTION, EOS],
-        [DISAGREE, SHIT_TALK, EOS],
-        [DISAGREE, GENERAL, EOS],
-    ],
-    GENERAL: [
-        [GENERAL, DAILY_LIFE, EOS],
-        [GENERAL, QUESTION, EOS],
-        [GENERAL, EATING, EOS],
-        [GENERAL, SHIT_TALK, EOS],
-    ],
-    EATING: [
-        [EATING, DAILY_LIFE, EOS],
-        [EATING, HAPPY, EOS],
-        [EATING, SHIT_TALK, EOS],
-        [EATING, QUESTION, EOS],
-    ],
-    DAILY_LIFE: [
-        [DAILY_LIFE, EATING, EOS],
-        [DAILY_LIFE, QUESTION, EOS],
-        [DAILY_LIFE, SHIT_TALK, EOS],
-        [DAILY_LIFE, HAPPY, EOS],
-    ],
-    RUST_GO: [
-        [RUST_GO, SHIT_TALK, EOS],
-        [RUST_GO, HAPPY, EOS],
-        [RUST_GO, INSULT, EOS],
-        [RUST_GO, QUESTION, EOS],
-        [RUST_GO, RUST_GO, SHIT_TALK, EOS],
+    PROGRAMMING: [
+        [PROGRAMMING, INSULT, EOS],
+        [PROGRAMMING, PROGRAMMING, EOS],
+        [PROGRAMMING, IDENTITY, EOS],
+        [PROGRAMMING, INSULT, PROGRAMMING, EOS],
+        [PROGRAMMING, UNKNOWN, EOS],
+        [PROGRAMMING, PROGRAMMING, INSULT, EOS],
+        [PROGRAMMING, LINKS, EOS],
+        [PROGRAMMING, COURSE, EOS],
     ],
     IDENTITY: [
-        [IDENTITY, GENERAL, EOS],
-        [IDENTITY, HAPPY, EOS],
-        [IDENTITY, DAILY_LIFE, EOS],
-        [IDENTITY, SHIT_TALK, EOS],
+        [IDENTITY, PROGRAMMING, EOS],
+        [IDENTITY, GREETING, EOS],
+        [IDENTITY, INSULT, EOS],
+        [IDENTITY, RESUME, EOS],
+        [IDENTITY, LINKS, EOS],
+        [IDENTITY, COURSE, EOS],
+        [IDENTITY, UNKNOWN, EOS],
     ],
-    SHIT_TALK: [
-        [SHIT_TALK, INSULT, EOS],
-        [SHIT_TALK, FRUSTRATED, EOS],
-        [SHIT_TALK, GENERAL, EOS],
-        [SHIT_TALK, RUST_GO, EOS],
+    RESUME: [
+        [RESUME, GREETING, EOS],
+        [RESUME, IDENTITY, EOS],
+        [RESUME, PROGRAMMING, EOS],
+        [RESUME, UNKNOWN, EOS],
+    ],
+    LINKS: [
+        [LINKS, GREETING, EOS],
+        [LINKS, IDENTITY, EOS],
+        [LINKS, PROGRAMMING, EOS],
+        [LINKS, UNKNOWN, EOS],
+    ],
+    COURSE: [
+        [COURSE, PROGRAMMING, EOS],
+        [COURSE, IDENTITY, EOS],
+        [COURSE, GREETING, EOS],
+    ],
+    UNKNOWN: [
+        [UNKNOWN, GREETING, EOS],
+        [UNKNOWN, INSULT, EOS],
+        [UNKNOWN, UNKNOWN, EOS],
+        [UNKNOWN, PROGRAMMING, EOS],
+        [UNKNOWN, IDENTITY, EOS],
     ],
 }
 
 MULTI_TURN_TEMPLATES: list[tuple[list[int], int, list[int]]] = [
-    ([GREETING, DAILY_LIFE, EOS], EATING, [EATING, SHIT_TALK, EOS]),
-    ([GREETING, EATING, EOS], DAILY_LIFE, [DAILY_LIFE, QUESTION, EOS]),
-    ([GREETING, SHIT_TALK, EOS], INSULT, [INSULT, SHIT_TALK, EOS]),
-    ([DAILY_LIFE, QUESTION, EOS], RUST_GO, [RUST_GO, SHIT_TALK, EOS]),
-    ([RUST_GO, SHIT_TALK, EOS], DISAGREE, [DISAGREE, RUST_GO, EOS]),
-    ([RUST_GO, INSULT, EOS], AGREE, [AGREE, HAPPY, EOS]),
-    ([INSULT, SHIT_TALK, EOS], GREETING, [GREETING, DAILY_LIFE, EOS]),
-    ([INSULT, EATING, EOS], EATING, [EATING, HAPPY, EOS]),
-    ([SAD, EATING, EOS], DAILY_LIFE, [DAILY_LIFE, HAPPY, EOS]),
-    ([HAPPY, RUST_GO, EOS], SHIT_TALK, [SHIT_TALK, RUST_GO, EOS]),
-    ([IDENTITY, GENERAL, EOS], QUESTION, [QUESTION, DAILY_LIFE, EOS]),
-    ([IDENTITY, SHIT_TALK, EOS], INSULT, [INSULT, SHIT_TALK, EOS]),
-    ([GENERAL, EATING, EOS], FAREWELL, [FAREWELL, EOS]),
-    ([DAILY_LIFE, HAPPY, EOS], FAREWELL, [FAREWELL, HAPPY, EOS]),
-    ([QUESTION, GENERAL, EOS], EATING, [EATING, DAILY_LIFE, EOS]),
-    ([SHIT_TALK, RUST_GO, EOS], RUST_GO, [RUST_GO, SHIT_TALK, EOS]),
+    ([GREETING, EOS], INSULT, [INSULT, INSULT, EOS]),
+    ([GREETING, IDENTITY, EOS], PROGRAMMING, [PROGRAMMING, INSULT, EOS]),
+    ([GREETING, PROGRAMMING, EOS], IDENTITY, [IDENTITY, RESUME, EOS]),
+    ([INSULT, INSULT, EOS], GREETING, [GREETING, UNKNOWN, EOS]),
+    ([INSULT, PROGRAMMING, EOS], INSULT, [INSULT, INSULT, INSULT, EOS]),
+    ([PROGRAMMING, INSULT, EOS], PROGRAMMING, [PROGRAMMING, PROGRAMMING, EOS]),
+    ([PROGRAMMING, PROGRAMMING, EOS], IDENTITY, [IDENTITY, PROGRAMMING, EOS]),
+    ([IDENTITY, PROGRAMMING, EOS], RESUME, [RESUME, IDENTITY, EOS]),
+    ([IDENTITY, RESUME, EOS], COURSE, [COURSE, PROGRAMMING, EOS]),
+    ([COURSE, PROGRAMMING, EOS], LINKS, [LINKS, IDENTITY, EOS]),
+    ([RESUME, GREETING, EOS], FAREWELL, [GREETING, FAREWELL, EOS]),
+    ([LINKS, GREETING, EOS], PROGRAMMING, [PROGRAMMING, INSULT, EOS]),
+    ([COURSE, GREETING, EOS], PROGRAMMING, [PROGRAMMING, PROGRAMMING, EOS]),
+    ([UNKNOWN, GREETING, EOS], IDENTITY, [IDENTITY, PROGRAMMING, EOS]),
+    ([GREETING, INSULT, EOS], INSULT, [INSULT, PROGRAMMING, INSULT, EOS]),
+    ([PROGRAMMING, IDENTITY, EOS], INSULT, [INSULT, INSULT, EOS]),
+    ([IDENTITY, LINKS, EOS], UNKNOWN, [UNKNOWN, GREETING, EOS]),
+    ([INSULT, UNKNOWN, EOS], GREETING, [GREETING, IDENTITY, EOS]),
+    ([LINKS, IDENTITY, EOS], GREETING, [GREETING, PROGRAMMING, EOS]),
+    ([PROGRAMMING, COURSE, EOS], LINKS, [LINKS, GREETING, EOS]),
 ]
 
-# Extra weight for the requested personality topics.
+# Extra weight for personality-heavy topics.
 TOPIC_WEIGHTS = {
-    GREETING: 1.3,
-    EATING: 1.8,
-    DAILY_LIFE: 1.8,
-    RUST_GO: 2.4,
-    SHIT_TALK: 2.2,
-    IDENTITY: 1.8,
-    INSULT: 2.2,
-    FAREWELL: 0.6,
+    GREETING: 1.5,
+    INSULT: 3.0,
+    PROGRAMMING: 2.8,
+    IDENTITY: 2.0,
+    RESUME: 1.5,
+    LINKS: 1.2,
+    COURSE: 1.5,
+    FAREWELL: 0.5,
+    UNKNOWN: 1.2,
 }
 
 # ---------------------------------------------------------------------------
@@ -209,7 +169,9 @@ def make_single_turn_row(action: int, lang: int, output_seq: list[int]) -> str:
     return " ".join(str(t) for t in [action, lang, SEP] + output_seq)
 
 
-def make_multi_turn_row(context: list[int], action: int, lang: int, output_seq: list[int]) -> str:
+def make_multi_turn_row(
+    context: list[int], action: int, lang: int, output_seq: list[int]
+) -> str:
     return " ".join(str(t) for t in list(context) + [action, lang, SEP] + output_seq)
 
 
@@ -238,7 +200,7 @@ def extend_output(seq: list[int], rng: random.Random, action: int) -> list[int]:
     allow_farewell = action == FAREWELL
     insert = random_output_action(rng, allow_farewell=allow_farewell)
     if not allow_farewell and insert == FAREWELL:
-        insert = GENERAL
+        insert = UNKNOWN
     body.insert(rng.randint(0, len(body)), insert)
     return body + [EOS]
 
@@ -249,7 +211,7 @@ def trim_output(seq: list[int], rng: random.Random) -> list[int]:
     body = list(seq[:-1])
     body.pop(rng.randint(0, len(body) - 1))
     if not body:
-        body.append(GENERAL)
+        body.append(UNKNOWN)
     return body + [EOS]
 
 
@@ -273,51 +235,49 @@ def generate_base_rows(rng: random.Random) -> list[str]:
     rows: list[str] = []
     for lang in [LANG_TH, LANG_EN]:
         for action, output_seqs in BASE_PATTERNS.items():
-            copies = max(2, int(4 * TOPIC_WEIGHTS.get(action, 1.0)))
+            copies = max(8, int(12 * TOPIC_WEIGHTS.get(action, 1.0)))
             for seq in output_seqs:
-                for _ in range(copies):
+                for _ in range(copies * 4):
                     rows.append(make_single_turn_row(action, lang, list(seq)))
-                for _ in range(copies):
-                    rows.append(make_single_turn_row(action, lang, perturb_output(seq, rng)))
-                for _ in range(max(1, copies // 2)):
-                    rows.append(make_single_turn_row(action, lang, extend_output(seq, rng, action)))
-                for _ in range(max(1, copies // 2)):
-                    rows.append(make_single_turn_row(action, lang, trim_output(seq, rng)))
     return rows
 
 
-def generate_multi_turn_rows(rng: random.Random, lang: int, copies: int = 10) -> list[str]:
+def generate_multi_turn_rows(
+    rng: random.Random, lang: int, copies: int = 30
+) -> list[str]:
     rows: list[str] = []
     for context, action, output_seq in MULTI_TURN_TEMPLATES:
         for _ in range(copies):
             seq = list(output_seq)
-            if rng.random() < 0.55:
+            if rng.random() < 0.4:
                 seq = perturb_output(seq, rng)
             rows.append(make_multi_turn_row(context, action, lang, seq))
     return rows
 
 
-def generate_random_multi_turn_rows(rng: random.Random, lang: int, count: int) -> list[str]:
+def generate_random_multi_turn_rows(
+    rng: random.Random, lang: int, count: int
+) -> list[str]:
     rows: list[str] = []
     for _ in range(count):
         action = weighted_actions(rng)
         seq = list(rng.choice(BASE_PATTERNS[action]))
-        if rng.random() < 0.45:
+        if rng.random() < 0.3:
             seq = perturb_output(seq, rng)
-        if rng.random() < 0.25:
+        if rng.random() < 0.15:
             seq = extend_output(seq, rng, action)
         rows.append(make_multi_turn_row(random_context(rng), action, lang, seq))
     return rows
 
 
 def generate_topic_drill_rows(rng: random.Random, lang: int, count: int) -> list[str]:
-    topic_actions = [GREETING, EATING, DAILY_LIFE, RUST_GO, SHIT_TALK, IDENTITY, INSULT]
+    topic_actions = list(BASE_PATTERNS.keys())
     rows: list[str] = []
     for _ in range(count):
         action = rng.choice(topic_actions)
         seq = list(rng.choice(BASE_PATTERNS[action]))
         if action != FAREWELL and FAREWELL in seq:
-            seq = [GENERAL if token == FAREWELL else token for token in seq]
+            seq = [UNKNOWN if token == FAREWELL else token for token in seq]
         rows.append(make_single_turn_row(action, lang, seq))
     return rows
 
@@ -355,17 +315,17 @@ def main() -> None:
     print(f"  base patterns:       {len(base):>5} rows")
 
     for lang, label in [(LANG_TH, "TH"), (LANG_EN, "EN")]:
-        mt = generate_multi_turn_rows(rng, lang, copies=12)
+        mt = generate_multi_turn_rows(rng, lang, copies=30)
         all_rows.extend(mt)
         print(f"  multi-turn {label}:      {len(mt):>5} rows")
 
     for lang, label in [(LANG_TH, "TH"), (LANG_EN, "EN")]:
-        random_rows = generate_random_multi_turn_rows(rng, lang, count=900)
+        random_rows = generate_random_multi_turn_rows(rng, lang, count=500)
         all_rows.extend(random_rows)
         print(f"  random-multi {label}:   {len(random_rows):>5} rows")
 
     for lang, label in [(LANG_TH, "TH"), (LANG_EN, "EN")]:
-        topic_rows = generate_topic_drill_rows(rng, lang, count=900)
+        topic_rows = generate_topic_drill_rows(rng, lang, count=500)
         all_rows.extend(topic_rows)
         print(f"  topic-drill {label}:    {len(topic_rows):>5} rows")
 

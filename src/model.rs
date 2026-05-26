@@ -70,7 +70,7 @@ impl SyncopateModelConfig {
     }
 
     pub fn preset_action(vocab_size: usize, seq_len: usize) -> Self {
-        Self::from_dimensions(vocab_size, seq_len, 1, 64, 4, 1, 64)
+        Self::from_dimensions(vocab_size, seq_len, 1, 16, 4, 1, 16)
     }
 
     pub fn estimated_parameter_count(&self) -> usize {
